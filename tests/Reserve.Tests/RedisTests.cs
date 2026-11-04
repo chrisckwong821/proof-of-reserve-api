@@ -81,6 +81,22 @@ public class RedisTests
     }
 
     [Test]
+    public async Task ManifestVersionIsReadWithoutLoadingUsers()
+    {
+        await PublishAsync(await Fixtures.ExampleAsync(), "version-check");
+        using var connector = new RedisConnector(new ReserveOptions
+        {
+            RefreshTimeUtc = TimeSpan.Zero,
+            ProofCacheEntries = 1,
+            RedisConnection = connectionString,
+            RedisManifestKey = manifestKey,
+            RedisUserKeyPrefix = "por:users:"
+        });
+
+        Assert.That(await connector.GetManifestVersionAsync(CancellationToken.None), Is.EqualTo("version-check"));
+    }
+
+    [Test]
     public async Task ManifestCountMismatchIsRejected()
     {
         var data = await Fixtures.ExampleAsync();

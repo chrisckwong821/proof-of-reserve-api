@@ -62,6 +62,7 @@ curl http://localhost:5080/api/reserves/users/3/proof
 ```text
 Program.cs → ReserveApplication.cs (settings, two endpoints, /health)
     → RefreshScheduler (startup load, daily refresh, retries)
+    → ManifestPoller (optional: refresh when the Redis manifest version changes)
     → ReserveCache (snapshot, root/proof lookup, proof cache)
         → RedisConnector (Redis only)
         → tagged-merkle (tree and proofs)
@@ -160,6 +161,9 @@ Validate → sort IDs → serialize tuples → build immutable Merkle tree
 - **Failure and retry:** a failed scheduled refresh keeps the last valid snapshot, logs the error, and retries after `Reserve:RefreshRetryDelay` (default `00:01:00`). The wait doubles each time up to `Reserve:RefreshRetryMaxDelay` (default `00:15:00`): 1, 2, 4, 8, then every 15 minutes.
 - Retries stop when one succeeds or when the next scheduled refresh would come first. `RefreshRetryDelay` `00:00:00` turns retries off.
 - If the first load at startup fails, the server does not start; that load is not retried. Monitor `/health` (see below) for stale data.
+- **Mid-day updates (optional):** by default, data published during the day is picked up at the next daily refresh or on restart. Set `Reserve:ManifestPollInterval` (e.g. `00:01:00`) to check the `por:current` manifest version at that interval and refresh as soon as it changes. Each check is one small Redis `GET`; users are reloaded only when the version is new, and the current snapshot keeps serving while the new one is built. A failed check logs a warning and the next interval tries again. `00:00:00` (the default) is off.
+- With polling on, the root and `snapshotId` can change during the day, so clients pinning `?snapshotId=` get `409` more often and must fetch the root again.
+- When a snapshot is replaced, the proofs cached for the old one are cleared.
 - **HTTP caching:** both APIs send `ETag` and `Cache-Control: private, no-cache`; a matching `If-None-Match` returns `304` after revalidation.
 
 ```json
@@ -186,6 +190,8 @@ Configuration values live only in `src/Reserve.Api/appsettings.json`;
 | After each load | `Next reserve refresh scheduled at {time}` |
 | Failed refresh attempt (Error) | `Refresh failed; keeping snapshot {id} (attempt {n}). Retrying in {delay}` with the exception, or `… No more retries before the next scheduled refresh at {time}`. The line still starts with the old `Refresh failed; keeping snapshot` text, so existing log alerts keep matching. |
 | Refresh recovered after retrying | `Refresh succeeded on attempt {n}` |
+| Polling found a new version | `Manifest version changed from {old} to {new}; refreshing` |
+| Polling check failed (Warning) | `Manifest poll failed; keeping snapshot {id}. Next poll in {interval}` with the exception |
 | Every `Reserve:HeartbeatInterval` (default `00:05:00`; `00:00:00` turns it off) | `Heartbeat: healthy; snapshot {id} ({n} users) is {age} old, next refresh {time}. Last {interval}: root {count} ({count} not modified), proofs {count} from cache and {count} newly built ({count} not modified), {count} not found, {count} rejected` |
 
 - The heartbeat is logged as a **Warning** and says `STALE` when the snapshot is stale.

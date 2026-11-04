@@ -21,28 +21,19 @@ public sealed class RedisConnector : IDisposable, IAsyncDisposable
         connection = new(() => ConnectionMultiplexer.ConnectAsync(options.RedisConnection));
     }
 
+    // Read only the published manifest's version: one small GET, used to detect new data without loading it.
+    public async Task<string> GetManifestVersionAsync(CancellationToken cancellationToken)
+    {
+        var db = (await connection.Value.WaitAsync(cancellationToken)).GetDatabase();
+        return (await ReadManifestAsync(db, cancellationToken)).Version;
+    }
+
     // Read the published manifest and its immutable user hash, then validate the record count.
     public async Task<UserDataSet> LoadAsync(CancellationToken cancellationToken)
     {
         var multiplexer = await connection.Value.WaitAsync(cancellationToken);
         var db = multiplexer.GetDatabase();
-        string? json = await db.StringGetAsync(options.RedisManifestKey).WaitAsync(cancellationToken);
-        if (json is null)
-        {
-            throw new InvalidDataException("Redis has no published reserve manifest.");
-        }
-
-        var manifest = JsonSerializer.Deserialize<RedisManifest>(
-            json, JsonSerializerOptions.Web)
-            ?? throw new InvalidDataException("Invalid Redis reserve manifest.");
-
-        if (string.IsNullOrWhiteSpace(manifest.Version) ||
-            manifest.Count < 0 ||
-            string.IsNullOrEmpty(manifest.Key) ||
-            !manifest.Key.StartsWith(options.RedisUserKeyPrefix, StringComparison.Ordinal))
-        {
-            throw new InvalidDataException("Invalid Redis reserve manifest fields.");
-        }
+        var manifest = await ReadManifestAsync(db, cancellationToken);
 
         // The manifest pins an immutable hash. Never SCAN a hash being updated in place.
         // SCAN can repeat fields; deduplicate identical entries before checking the count.
@@ -72,6 +63,29 @@ public sealed class RedisConnector : IDisposable, IAsyncDisposable
         }
 
         return new UserDataSet(manifest.Version, users.Values.ToArray());
+    }
+
+    // Read and validate the manifest that points at the current immutable user hash.
+    private async Task<RedisManifest> ReadManifestAsync(IDatabase db, CancellationToken cancellationToken)
+    {
+        string? json = await db.StringGetAsync(options.RedisManifestKey).WaitAsync(cancellationToken);
+        if (json is null)
+        {
+            throw new InvalidDataException("Redis has no published reserve manifest.");
+        }
+
+        var manifest = JsonSerializer.Deserialize<RedisManifest>(json, JsonSerializerOptions.Web)
+            ?? throw new InvalidDataException("Invalid Redis reserve manifest.");
+
+        if (string.IsNullOrWhiteSpace(manifest.Version) ||
+            manifest.Count < 0 ||
+            string.IsNullOrEmpty(manifest.Key) ||
+            !manifest.Key.StartsWith(options.RedisUserKeyPrefix, StringComparison.Ordinal))
+        {
+            throw new InvalidDataException("Invalid Redis reserve manifest fields.");
+        }
+
+        return manifest;
     }
 
     // Used by the host at shutdown: close the connection and wait for it, with a bounded wait for an unfinished connect.

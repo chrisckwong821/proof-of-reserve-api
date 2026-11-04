@@ -21,6 +21,7 @@ public class ConfigurationTests
     [TestCase("--Reserve:StaleGracePeriod", "1.00:00:00", "StaleGracePeriod")]
     [TestCase("--Reserve:RefreshRetryDelay", "-00:00:01", "RefreshRetryDelay")]
     [TestCase("--Reserve:RefreshRetryMaxDelay", "00:00:30", "RefreshRetryMaxDelay")]
+    [TestCase("--Reserve:ManifestPollInterval", "-00:00:01", "ManifestPollInterval")]
     public async Task InvalidSettingStopsStartupBeforeLoadingData(string key, string value, string expectedInMessage)
     {
         var source = new MutableSource(await Fixtures.ExampleAsync());

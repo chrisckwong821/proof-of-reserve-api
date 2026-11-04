@@ -53,6 +53,9 @@ public sealed class ReserveOptions
     // Optional. Longest wait between retries.
     public TimeSpan RefreshRetryMaxDelay { get; set; } = TimeSpan.FromMinutes(15);
 
+    // Optional. How often to check the Redis manifest version and refresh when it changes; 00:00:00 (default) is off.
+    public TimeSpan ManifestPollInterval { get; set; } = TimeSpan.Zero;
+
     // The validated refresh time. RefreshTimeUtc stays nullable so a missing setting is rejected, not read as 00:00.
     public TimeSpan RefreshTime => RefreshTimeUtc
         ?? throw new InvalidOperationException("RefreshTimeUtc is not configured.");
@@ -92,6 +95,11 @@ public sealed class ReserveOptions
         if (RefreshRetryMaxDelay < RefreshRetryDelay || RefreshRetryMaxDelay >= TimeSpan.FromDays(1))
         {
             throw new ArgumentException("RefreshRetryMaxDelay must be at least RefreshRetryDelay and under one day.");
+        }
+
+        if (ManifestPollInterval < TimeSpan.Zero || ManifestPollInterval >= TimeSpan.FromDays(1))
+        {
+            throw new ArgumentException("ManifestPollInterval must be zero (off) or positive and under one day.");
         }
     }
 

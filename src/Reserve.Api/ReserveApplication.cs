@@ -7,9 +7,11 @@ namespace Reserve.Api;
 public static partial class ReserveApplication
 {
     // Configure the Redis-backed cache, refresh scheduler and endpoints; tests can supply an in-memory loader.
+    // readVersion is the manifest-version check used by ManifestPoller; it defaults to Redis when loadUsers is not given.
     public static WebApplication Build(
         string[] args,
-        Func<CancellationToken, Task<UserDataSet>>? loadUsers = null)
+        Func<CancellationToken, Task<UserDataSet>>? loadUsers = null,
+        Func<CancellationToken, Task<string>>? readVersion = null)
     {
         // Resolve appsettings beside the executable, regardless of the working directory.
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -37,6 +39,13 @@ public static partial class ReserveApplication
                 load);
         });
         builder.Services.AddHostedService<RefreshScheduler>();
+        builder.Services.AddHostedService(services => new ManifestPoller(
+            services.GetRequiredService<ReserveCache>(),
+            services.GetRequiredService<ReserveOptions>(),
+            services.GetRequiredService<ILogger<ManifestPoller>>(),
+            readVersion ?? (loadUsers is null
+                ? services.GetRequiredService<RedisConnector>().GetManifestVersionAsync
+                : null)));
         builder.Services.AddSingleton<RequestStats>();
         builder.Services.AddHostedService<HeartbeatService>();
         builder.Services.AddHealthChecks().AddCheck<SnapshotHealthCheck>("snapshot");

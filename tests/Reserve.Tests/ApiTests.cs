@@ -109,6 +109,20 @@ public class ApiTests
     }
 
     [Test]
+    public async Task RefreshClearsProofsOfTheReplacedSnapshot()
+    {
+        var previous = server.Cache.Current;
+        server.Cache.GetProofJson(previous, 1, out _);
+        server.Cache.GetProofJson(previous, 1, out bool cachedBefore);
+        Assert.That(cachedBefore, Is.True);
+
+        await server.Cache.RefreshAsync();
+
+        server.Cache.GetProofJson(previous, 1, out bool cachedAfter);
+        Assert.That(cachedAfter, Is.False, "Old-snapshot proofs must not keep using cache space.");
+    }
+
+    [Test]
     public async Task RefreshReplacesCachesAndRejectsOldSnapshotPins()
     {
         var previous = server.Cache.Current;

@@ -51,7 +51,7 @@ public sealed class TestApp : IAsyncDisposable
     {
         var source = new MutableSource(data);
         string[] args = ["--urls", "http://127.0.0.1:0", "--Logging:LogLevel:Default", "Warning", .. extraArgs];
-        var app = ReserveApplication.Build(args, source.LoadAsync);
+        var app = ReserveApplication.Build(args, source.LoadAsync, source.GetVersionAsync);
         await app.StartAsync();
         return new TestApp(app, source);
     }
@@ -76,6 +76,22 @@ public sealed class MutableSource(UserDataSet data)
     public int FailuresRemaining { get; set; }
     public TaskCompletionSource? Gate { get; set; }
     public int Reads => Volatile.Read(ref reads);
+
+    // Manifest-version checks made by ManifestPoller, and how many upcoming checks should fail.
+    public int VersionReads { get; private set; }
+    public int VersionFailuresRemaining { get; set; }
+
+    public Task<string> GetVersionAsync(CancellationToken cancellationToken)
+    {
+        VersionReads++;
+        if (VersionFailuresRemaining > 0)
+        {
+            VersionFailuresRemaining--;
+            throw new IOException("Simulated manifest read failure.");
+        }
+
+        return Task.FromResult(Data.Version);
+    }
 
     public async Task<UserDataSet> LoadAsync(CancellationToken cancellationToken)
     {

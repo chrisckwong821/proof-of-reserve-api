@@ -46,6 +46,8 @@ public sealed class ReserveCache : IDisposable
             var next = await Task.Run(() => BuildSnapshot(data, cancellationToken), cancellationToken);
             // Publish only the complete replacement; readers can finish using the old snapshot.
             Volatile.Write(ref current, next);
+            // Every cached proof belongs to the replaced snapshot, so free the cache for the new one.
+            proofs.Compact(1.0);
             logger.LogInformation(
                 "Published reserve snapshot {SnapshotId}: {UserCount} users, data version {DataVersion}, " +
                 "root {Root}, loaded in {ElapsedMs:F0} ms",
