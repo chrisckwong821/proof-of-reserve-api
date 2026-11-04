@@ -1,4 +1,5 @@
 using System.Collections.Frozen;
+using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.Caching.Memory;
 using TaggedMerkle;
@@ -31,6 +32,9 @@ public sealed class ReserveCache : BackgroundService
     public Snapshot Current => Volatile.Read(ref current)
         ?? throw new InvalidOperationException("No reserve snapshot has been loaded.");
 
+    // The published snapshot, or null before the first load completes.
+    public Snapshot? CurrentOrDefault => Volatile.Read(ref current);
+
     // Load the first snapshot before the server starts accepting requests.
     public override async Task StartAsync(CancellationToken cancellationToken)
     {
@@ -47,12 +51,12 @@ public sealed class ReserveCache : BackgroundService
             {
                 DateTimeOffset now = DateTimeOffset.UtcNow;
                 DateTimeOffset next = options.GetNextRefreshUtc(now);
+                logger.LogInformation("Next reserve refresh scheduled at {NextRefreshUtc:u}", next);
                 await Task.Delay(next - now, stoppingToken);
 
                 try
                 {
                     await RefreshAsync(stoppingToken);
-                    logger.LogInformation("Published reserve snapshot {SnapshotId}", Current.Root.SnapshotId);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
                 {
@@ -76,10 +80,19 @@ public sealed class ReserveCache : BackgroundService
         await refreshGate.WaitAsync(cancellationToken);
         try
         {
+            long started = Stopwatch.GetTimestamp();
             var data = await loadUsers(cancellationToken);
             var next = await Task.Run(() => BuildSnapshot(data, cancellationToken), cancellationToken);
             // Publish only the complete replacement; readers can finish using the old snapshot.
             Volatile.Write(ref current, next);
+            logger.LogInformation(
+                "Published reserve snapshot {SnapshotId}: {UserCount} users, data version {DataVersion}, " +
+                "root {Root}, loaded in {ElapsedMs:F0} ms",
+                next.Root.SnapshotId,
+                next.Root.UserCount,
+                next.Root.DataVersion,
+                next.Root.Root,
+                Stopwatch.GetElapsedTime(started).TotalMilliseconds);
         }
         finally
         {
@@ -88,13 +101,19 @@ public sealed class ReserveCache : BackgroundService
     }
 
     // Reuse cached proof JSON, or build it from the snapshot; unknown users return null.
-    public byte[]? GetProofJson(Snapshot snapshot, int userId)
+    public byte[]? GetProofJson(Snapshot snapshot, int userId) => GetProofJson(snapshot, userId, out _);
+
+    // Same as above; fromCache reports whether the JSON came from the proof cache or was just built.
+    public byte[]? GetProofJson(Snapshot snapshot, int userId, out bool fromCache)
     {
         var key = (snapshot.Root.SnapshotId, userId);
         if (proofs.TryGetValue(key, out byte[]? cached))
         {
+            fromCache = true;
             return cached;
         }
+
+        fromCache = false;
 
         if (!snapshot.Users.TryGetValue(userId, out var user))
         {

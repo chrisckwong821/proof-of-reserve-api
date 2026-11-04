@@ -33,6 +33,12 @@ public sealed class ReserveOptions
     public required string RedisManifestKey { get; set; }
     public required string RedisUserKeyPrefix { get; set; }
 
+    // Optional. How often to log a heartbeat line with snapshot age and request counts; 00:00:00 turns it off.
+    public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+    // Optional. How long after a scheduled refresh /health still reports healthy if no new snapshot has appeared.
+    public TimeSpan StaleGracePeriod { get; set; } = TimeSpan.FromMinutes(30);
+
     // The validated refresh time. RefreshTimeUtc stays nullable so a missing setting is rejected, not read as 00:00.
     public TimeSpan RefreshTime => RefreshTimeUtc
         ?? throw new InvalidOperationException("RefreshTimeUtc is not configured.");
@@ -52,6 +58,16 @@ public sealed class ReserveOptions
         if (ProofCacheEntries < 1)
         {
             throw new ArgumentException("ProofCacheEntries must be positive.");
+        }
+
+        if (HeartbeatInterval < TimeSpan.Zero)
+        {
+            throw new ArgumentException("HeartbeatInterval must be zero (off) or positive.");
+        }
+
+        if (StaleGracePeriod < TimeSpan.Zero || StaleGracePeriod >= TimeSpan.FromDays(1))
+        {
+            throw new ArgumentException("StaleGracePeriod must be between 00:00:00 and 23:59:59.9999999.");
         }
     }
 

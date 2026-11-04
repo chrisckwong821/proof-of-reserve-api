@@ -60,10 +60,11 @@ curl http://localhost:5080/api/reserves/users/3/proof
 ## How the server is organized
 
 ```text
-Program.cs → ReserveApplication.cs (settings and two endpoints)
+Program.cs → ReserveApplication.cs (settings, two endpoints, /health)
     → ReserveCache (root/proof lookup and daily refresh)
         → RedisConnector (Redis only)
         → tagged-merkle (tree and proofs)
+    → SnapshotHealthCheck, HeartbeatService, RequestStats (monitoring)
 ```
 - `RedisConnector` is the only user-data source;
 - Snapshot construction and the refresh timer live in the cache component; `Models.cs` contains only data records, settings, and the settings validator.
@@ -155,13 +156,45 @@ Validate → sort IDs → serialize tuples → build immutable Merkle tree
 - **Root cache:** JSON is created once per snapshot and reused until a successful refresh replaces it.
 - **Refresh:** load once at startup, then rebuild daily at `00:10 UTC`. Set `Reserve:RefreshTimeUtc` in `appsettings.json` (or `Reserve__RefreshTimeUtc`) to another UTC clock time; this is a time of day, not an interval.
 - **Consistency:** each request captures one complete snapshot; a replacement cannot mix old balances with a new root, and proof cache keys never cross snapshot versions.
-- **Failure:** a failed refresh keeps the last valid snapshot and logs the error; the next attempt is at the following daily scheduled time, so monitor the generation timestamp for stale data.
+- **Failure:** a failed refresh keeps the last valid snapshot and logs the error; the next attempt is at the following daily scheduled time, so monitor `/health` (see below) for stale data.
 - **HTTP caching:** both APIs send `ETag` and `Cache-Control: private, no-cache`; a matching `If-None-Match` returns `304` after revalidation.
 
 ```json
 "RefreshTimeUtc": "00:10:00"
 ```
 Configuration values live only in `src/Reserve.Api/appsettings.json`;
+
+## Health and logging
+
+**Health check:** `GET /health` returns `200` with `"status": "Healthy"` while the snapshot is current, and `503` with `"Unhealthy"` once it is stale.
+```json
+{"status":"Healthy","checks":{"snapshot":{"status":"Healthy","description":"Snapshot is current.",
+  "data":{"snapshotId":"2742e1…","dataVersion":"bdef87…","userCount":8,
+          "generatedAtUtc":"2026-11-04T10:43:41.98+00:00","nextRefreshUtc":"2026-11-05T00:10:00+00:00"}}}}
+```
+- **Stale** means the snapshot is older than the most recent scheduled refresh and `Reserve:StaleGracePeriod` (default `00:30:00`) has passed since that refresh was due.
+- Use it for alerts or a load-balancer readiness check. Avoid it as a liveness probe that restarts the server: if Redis is down, a restarted server cannot load data and will not start.
+
+**Logs at the default level (Information):**
+
+| When | Line |
+| --- | --- |
+| Startup and each successful refresh | `Published reserve snapshot {id}: {n} users, data version {v}, root {hash}, loaded in {ms} ms` |
+| After each load | `Next reserve refresh scheduled at {time}` |
+| Failed refresh (Error) | `Refresh failed; keeping snapshot {id}` with the exception |
+| Every `Reserve:HeartbeatInterval` (default `00:05:00`; `00:00:00` turns it off) | `Heartbeat: healthy; snapshot {id} ({n} users) is {age} old, next refresh {time}. Last {interval}: root {count} ({count} not modified), proofs {count} from cache and {count} newly built ({count} not modified), {count} not found, {count} rejected` |
+
+- The heartbeat is logged as a **Warning** and says `STALE` when the snapshot is stale.
+- Counts cover the interval since the previous heartbeat. "From cache" means the proof JSON was reused; "newly built" means it was built from the snapshot on that request. The root is always served from the snapshot's cached JSON.
+
+**Per-request lines (Debug, off by default):** set the `Reserve.Api.Requests` log level to `Debug` in `appsettings.json`, or pass `--Logging:LogLevel:Reserve.Api.Requests=Debug`.
+```text
+GET root: 200, snapshot 2742e1…
+GET proof for user 3: 200, proof newly built, snapshot 2742e1…
+GET proof for user 3: 200, proof from cache, snapshot 2742e1…
+GET proof for user 42: 404, user not found
+```
+- These are off by default because at thousands of requests per second they flood the logs and cost throughput. Use them briefly for debugging; use the heartbeat counts for day-to-day monitoring.
 
 ## Tests
 

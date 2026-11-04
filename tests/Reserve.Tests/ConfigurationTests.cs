@@ -17,10 +17,14 @@ public class ConfigurationTests
     [TestCase("--Reserve:ProofCacheEntries", "0", "ProofCacheEntries")]
     [TestCase("--Reserve:RefreshTimeUtc", "1.00:00:00", "RefreshTimeUtc")]
     [TestCase("--Reserve:RedisManifestKey", " ", "RedisManifestKey")]
+    [TestCase("--Reserve:HeartbeatInterval", "-00:00:01", "HeartbeatInterval")]
+    [TestCase("--Reserve:StaleGracePeriod", "1.00:00:00", "StaleGracePeriod")]
     public async Task InvalidSettingStopsStartupBeforeLoadingData(string key, string value, string expectedInMessage)
     {
         var source = new MutableSource(await Fixtures.ExampleAsync());
-        await using var app = ReserveApplication.Build(["--urls", "http://127.0.0.1:0", key, value], source.LoadAsync);
+        // Logging off: the host logs the expected startup failure with a full stack trace.
+        await using var app = ReserveApplication.Build(
+            ["--urls", "http://127.0.0.1:0", "--Logging:LogLevel:Default", "None", key, value], source.LoadAsync);
 
         var error = Assert.ThrowsAsync<OptionsValidationException>(() => app.StartAsync());
 
