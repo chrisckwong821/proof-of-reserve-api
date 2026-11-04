@@ -4,6 +4,8 @@ using Reserve.Api;
 using StackExchange.Redis;
 
 var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+
+// Generate repeatable mock balances and replace the fixture only after the write completes.
 if (args.Length == 2 && args[0] == "generate")
 {
     var random = new Random(340);
@@ -20,16 +22,28 @@ if (args.Length == 2 && args[0] == "generate")
     }
     finally
     {
-        if (File.Exists(temporary)) File.Delete(temporary);
+        if (File.Exists(temporary))
+        {
+            File.Delete(temporary);
+        }
     }
+
     Console.WriteLine($"Saved {users.Length:N0} users to {output}; IDs 1..100000, balances 0..999999 JPY, seed 340.");
     return 0;
 }
+
+// Validate a saved fixture, write a new Redis hash, and publish its manifest last.
 if (args.Length is 3 or 4 && args[0] == "seed-redis")
 {
-    var data = await new FileUserRepository(Path.GetFullPath(args[1])).LoadAsync(CancellationToken.None);
+    // Only this test-data tool reads fixture files; the server reads Redis.
+    await using var stream = File.OpenRead(Path.GetFullPath(args[1]));
+    var users = await JsonSerializer.DeserializeAsync<UserAccount[]>(stream, jsonOptions)
+        ?? throw new InvalidDataException("The fixture must contain a JSON array.");
+    var data = new UserDataSet(Path.GetFileName(args[1]), users);
+
     // Validate before touching Redis.
-    _ = ReserveSnapshot.Build(data, CancellationToken.None);
+    _ = ReserveCache.BuildSnapshot(data, CancellationToken.None);
+
     string connectionString = args[2];
     string manifestKey = args.Length == 4 ? args[3] : "por:current";
     string version = Guid.NewGuid().ToString("N");
@@ -42,11 +56,14 @@ if (args.Length is 3 or 4 && args[0] == "seed-redis")
             user.Id.ToString(CultureInfo.InvariantCulture),
             user.Balance.ToString(CultureInfo.InvariantCulture))).ToArray());
     }
+
     var manifest = new RedisManifest(version, key, data.Users.Length);
     // Publish one pointer only after the entire immutable version has been written.
     await db.StringSetAsync(manifestKey, JsonSerializer.Serialize(manifest, jsonOptions));
     Console.WriteLine($"Published {data.Users.Length:N0} users as {key}; pointer: {manifestKey}.");
     return 0;
 }
-Console.Error.WriteLine("Usage: ReserveData generate <output.json> | seed-redis <input.json> <connection> [manifest-key]");
+
+Console.Error.WriteLine(
+    "Usage: ReserveData generate <output.json> | seed-redis <input.json> <connection> [manifest-key]");
 return 1;

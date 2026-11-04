@@ -4,34 +4,57 @@ namespace Reserve.Api;
 
 public sealed record UserAccount(int Id, long Balance)
 {
+    // Produce the exact leaf text without spaces or culture-dependent number formatting.
     public string Serialize() => string.Create(CultureInfo.InvariantCulture, $"({Id},{Balance})");
 }
 
 public sealed record UserDataSet(string Version, UserAccount[] Users);
 
 public sealed record RootResponse(
-    string SnapshotId, string Root, int UserCount, DateTimeOffset GeneratedAtUtc, string DataVersion);
+    string SnapshotId,
+    string Root,
+    int UserCount,
+    DateTimeOffset GeneratedAtUtc,
+    string DataVersion);
 
 public sealed record ProofResponse(
-    string SnapshotId, string Root, int UserId, long UserBalance, object[][] Proof);
+    string SnapshotId,
+    string Root,
+    int UserId,
+    long UserBalance,
+    object[][] Proof);
 
 public sealed class ReserveOptions
 {
-    public string Source { get; set; } = "File";
-    public string FilePath { get; set; } = "data/users-100000.json";
-    public TimeSpan RefreshInterval { get; set; } = TimeSpan.FromDays(1);
-    public int ProofCacheEntries { get; set; } = 10_000;
-    public string RedisConnection { get; set; } = "localhost:6379,abortConnect=false";
-    public string RedisManifestKey { get; set; } = "por:current";
-    public string RedisUserKeyPrefix { get; set; } = "por:users:";
+    public TimeSpan? RefreshTimeUtc { get; set; }
+    public int ProofCacheEntries { get; set; }
+    public required string RedisConnection { get; set; }
+    public required string RedisManifestKey { get; set; }
+    public required string RedisUserKeyPrefix { get; set; }
 
+    // Reject missing or invalid configuration before the server starts.
     public void Validate()
     {
-        if (Source is not ("File" or "Redis"))
-            throw new ArgumentException("Reserve:Source must be File or Redis.");
-        if (RefreshInterval <= TimeSpan.Zero || RefreshInterval > TimeSpan.FromDays(30))
-            throw new ArgumentException("RefreshInterval must be positive and at most 30 days.");
+        ArgumentException.ThrowIfNullOrWhiteSpace(RedisConnection);
+        ArgumentException.ThrowIfNullOrWhiteSpace(RedisManifestKey);
+        ArgumentException.ThrowIfNullOrWhiteSpace(RedisUserKeyPrefix);
+
+        if (RefreshTimeUtc is not { } time || time < TimeSpan.Zero || time >= TimeSpan.FromDays(1))
+        {
+            throw new ArgumentException("RefreshTimeUtc is required and must be between 00:00:00 and 23:59:59.9999999.");
+        }
+
         if (ProofCacheEntries < 1)
+        {
             throw new ArgumentException("ProofCacheEntries must be positive.");
+        }
+    }
+
+    // Return the next occurrence of the configured UTC time, rolling over to tomorrow when needed.
+    public DateTimeOffset GetNextRefreshUtc(DateTimeOffset now)
+    {
+        DateTimeOffset utc = now.ToUniversalTime();
+        var scheduled = new DateTimeOffset(utc.Date, TimeSpan.Zero) + RefreshTimeUtc!.Value;
+        return scheduled > utc ? scheduled : scheduled.AddDays(1);
     }
 }

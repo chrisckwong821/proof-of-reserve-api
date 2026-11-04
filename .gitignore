@@ -11,3 +11,11 @@ artifacts/
 .env.*
 !.env.example
 appsettings.Local.json
+
+# Python integration tooling
+__pycache__/
+*.pyc
+
+# Local tooling and runtime output
+.venv/
+*.log
