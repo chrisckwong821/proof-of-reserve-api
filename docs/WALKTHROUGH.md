@@ -22,7 +22,7 @@ This is an internal API. There's no authentication; that's a deliberate, known d
 
 ## 2. The one idea to hold on to: the snapshot
 
-*[Show the diagram in README.md under "How the server is organized".]*
+*[Show the diagram in README.md under "How it works".]*
 
 Before any code, here's the one idea that explains most of the design.
 
@@ -36,7 +36,7 @@ The diagram has two halves. The top half is refresh, which happens in the backgr
 
 ## 3. Where the data comes from: Redis
 
-*[Show README.md, the "Redis" section with the example keys.]*
+*[Show docs/OPERATIONS.md, the "Redis data" section with the example keys.]*
 
 User data lives in Redis, in two kinds of keys.
 
