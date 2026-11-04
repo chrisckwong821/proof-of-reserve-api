@@ -62,6 +62,7 @@ curl http://localhost:5080/api/reserves/users/3/proof
 | `tests/Reserve.Tests/Fixtures/` | Saved eight-user and 100k mock datasets, used only for testing and seeding test Redis. |
 | `tests/` | Contains the full-system runner and `stress.py` for repeatable HTTP load tests. |
 | `tools/ReserveData/` | Generates mock data and seeds Redis; used by the integration script, not by the running server. |
+| `docs/` | `WALKTHROUGH.md`: a read-aloud walkthrough of how the server works, for reviewers and new engineers. |
 | `vendor/tagged-merkle/` | Merkle library submodule; its source and tests belong to that library. |
 | `.github/workflows/` | GitHub Actions configuration for automated builds and tests. |
 | `bin/` and `obj/` | Generated build output and intermediate files inside projects; ignored by Git.
