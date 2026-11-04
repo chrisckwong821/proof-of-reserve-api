@@ -46,4 +46,22 @@ public sealed class SnapshotHealthCheck(ReserveCache cache, ReserveOptions optio
 
         return (true, $"Snapshot predates the {lastScheduled:u} scheduled refresh; that refresh failed or is still running.");
     }
+
+    // The /health response body: overall status plus each check's description and details.
+    public static Task WriteResponseAsync(HttpContext context, HealthReport report)
+    {
+        context.Response.ContentType = "application/json";
+        return context.Response.WriteAsJsonAsync(new
+        {
+            status = report.Status.ToString(),
+            checks = report.Entries.ToDictionary(
+                entry => entry.Key,
+                entry => new
+                {
+                    status = entry.Value.Status.ToString(),
+                    description = entry.Value.Description,
+                    data = entry.Value.Data
+                })
+        });
+    }
 }

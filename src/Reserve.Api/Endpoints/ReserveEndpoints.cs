@@ -1,6 +1,5 @@
 using System.Globalization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
-using Microsoft.Extensions.Diagnostics.HealthChecks;
 
 namespace Reserve.Api;
 
@@ -14,7 +13,8 @@ public static partial class ReserveEndpoints
     {
         var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(RequestLogCategory);
 
-        app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = WriteHealthJson });
+        app.MapHealthChecks("/health",
+            new HealthCheckOptions { ResponseWriter = SnapshotHealthCheck.WriteResponseAsync });
         app.MapGet("/api/reserves/root",
             (HttpContext context, ReserveCache cache) => GetRoot(context, cache, log));
         // userId is a string so a non-numeric ID gets a JSON 400 instead of the router's empty 404.
@@ -96,24 +96,6 @@ public static partial class ReserveEndpoints
         return context.Request.Headers.IfNoneMatch.ToString().Split(',')
             .Select(value => value.Trim())
             .Any(value => value == etag || value == "W/" + etag || value == "*");
-    }
-
-    // Write the health result as JSON: overall status plus each check's description and details.
-    private static Task WriteHealthJson(HttpContext context, HealthReport report)
-    {
-        context.Response.ContentType = "application/json";
-        return context.Response.WriteAsJsonAsync(new
-        {
-            status = report.Status.ToString(),
-            checks = report.Entries.ToDictionary(
-                entry => entry.Key,
-                entry => new
-                {
-                    status = entry.Value.Status.ToString(),
-                    description = entry.Value.Description,
-                    data = entry.Value.Data
-                })
-        });
     }
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "GET root: {StatusCode}, snapshot {SnapshotId}")]

@@ -94,7 +94,7 @@ Requests (read only: use the current snapshot)
 | `Snapshots/` | `ReserveCache`: current snapshot, `RefreshAsync`, `BuildSnapshot`, proof cache. `ProofTags`: Merkle hash tags |
 | `Refresh/` | `RefreshScheduler`: startup load, daily refresh, retry with backoff. `ManifestPoller`: optional mid-day version check |
 | `Data/` | `IUserDataSource`: where user data comes from (load users, read the current version). `RedisConnector`: the production source; reads the manifest and its immutable user hash |
-| `Monitoring/` | `SnapshotHealthCheck`: the `/health` staleness check |
+| `Monitoring/` | `SnapshotHealthCheck`: the `/health` staleness check and its JSON response |
 | `Configuration/` | `ReserveOptions` (all `Reserve:*` settings) and its startup validator; see [Settings: appsettings.json and ReserveOptions](#settings-appsettingsjson-and-reserveoptions) |
 | `Models/` | `UserAccount`/`UserDataSet` (loaded data) and `RootResponse`/`ProofResponse` (API JSON) |
 
