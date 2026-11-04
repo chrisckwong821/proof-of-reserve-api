@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "RESPite": {
+        "type": "Transitive",
+        "resolved": "3.2.0",
+        "contentHash": "7M3keAYl4YVvaEt4HSWEJ/VuO+0etlTqzRaDeeiOhC8rcV6qR9IUeJHwTuGygO5pdJ7b+h9gS6VRGH6goC21/A=="
+      },
+      "StackExchange.Redis": {
+        "type": "Transitive",
+        "resolved": "3.2.0",
+        "contentHash": "TslSZ7wRyEdl2YIl4O4xxL108+oKjNsbHOfM3ujt5oQ6CMFUH4KosmmRXypV+K5GS1JGdI8+e1dZ2HsHrghocg==",
+        "dependencies": {
+          "RESPite": "3.2.0",
+          "System.IO.Hashing": "10.0.12"
+        }
+      },
+      "System.IO.Hashing": {
+        "type": "Transitive",
+        "resolved": "10.0.12",
+        "contentHash": "jDix4bBMYnpZdSPcnY+KDV6ik3SRMzpMKby/bZl/XUwIiflwRNAFZ0oOl61R/pSaveIJ8t1gs2BUlrGsPs/bcg=="
+      },
+      "reserve.api": {
+        "type": "Project",
+        "dependencies": {
+          "StackExchange.Redis": "[3.2.0, )",
+          "TaggedMerkle": "[0.1.0, )"
+        }
+      },
+      "taggedmerkle": {
+        "type": "Project"
+      }
+    }
+  }
+}

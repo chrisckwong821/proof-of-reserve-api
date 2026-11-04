@@ -1,0 +1,7 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <ItemGroup>
+    <ProjectReference Include="../../vendor/tagged-merkle/src/TaggedMerkle/TaggedMerkle.csproj" />
+    <PackageReference Include="StackExchange.Redis" Version="3.2.0" />
+    <Content Include="../../data/*.json" Link="data/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

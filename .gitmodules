@@ -1,0 +1,3 @@
+[submodule "vendor/tagged-merkle"]
+	path = vendor/tagged-merkle
+	url = https://github.com/chrisckwong821/tagged-merkle.git

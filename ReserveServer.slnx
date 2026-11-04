@@ -1,0 +1,6 @@
+<Solution>
+  <Folder Name="/src/"><Project Path="src/Reserve.Api/Reserve.Api.csproj" /></Folder>
+  <Folder Name="/tests/"><Project Path="tests/Reserve.Tests/Reserve.Tests.csproj" /></Folder>
+  <Folder Name="/tools/"><Project Path="tools/ReserveData/ReserveData.csproj" /></Folder>
+  <Folder Name="/vendor/"><Project Path="vendor/tagged-merkle/src/TaggedMerkle/TaggedMerkle.csproj" /></Folder>
+</Solution>
