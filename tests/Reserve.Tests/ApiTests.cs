@@ -44,6 +44,22 @@ public class ApiTests
         }
     }
 
+    // Pins the exact response bytes (the README example) so a refactor cannot change the wire format.
+    [Test]
+    public async Task ProofJsonMatchesDocumentedFormatExactly()
+    {
+        string body = await server.Client.GetStringAsync("/api/reserves/users/3/proof");
+        string snapshotId = server.Cache.Current.Root.SnapshotId;
+
+        Assert.That(body, Is.EqualTo(
+            "{\"snapshotId\":\"" + snapshotId + "\"," +
+            "\"root\":\"" + Fixtures.ExampleRoot + "\"," +
+            "\"userId\":3,\"userBalance\":3333,\"proof\":[" +
+            "[\"8520072399ad3462db395a7a9803c6fe3f4143d502a0eb145e6c69ba7ec6d22d\",1]," +
+            "[\"99fb04c9b8fd37e66b2dde367d91f2c930b2ab162dbbf7298e9313c309c7925f\",0]," +
+            "[\"9d7f79fa8e788d4a32c9c674b67dcfaf0885f539ac2699129e3c4d88c11c76e7\",1]]}"));
+    }
+
     [TestCase("/api/reserves/root")]
     [TestCase("/api/reserves/users/1/proof")]
     public async Task ResponsesAreCachedAndSupportConditionalGet(string path)

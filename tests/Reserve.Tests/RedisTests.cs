@@ -100,6 +100,37 @@ public class RedisTests
         Assert.ThrowsAsync<InvalidDataException>(() => connector.LoadAsync(CancellationToken.None));
     }
 
+    [Test]
+    public async Task DisposeAsyncClosesTheRedisConnection()
+    {
+        await PublishAsync(await Fixtures.ExampleAsync(), "dispose");
+        string clientName = "por-dispose-test-" + Guid.NewGuid().ToString("N");
+        var connector = new RedisConnector(new ReserveOptions
+        {
+            RefreshTimeUtc = TimeSpan.Zero,
+            ProofCacheEntries = 1,
+            RedisConnection = connectionString + ",name=" + clientName,
+            RedisManifestKey = manifestKey,
+            RedisUserKeyPrefix = "por:users:"
+        });
+        // CLIENT LIST is an admin command, so inspect connections through a separate admin connection.
+        using var admin = await ConnectionMultiplexer.ConnectAsync(connectionString + ",allowAdmin=true");
+        var server = admin.GetServer(admin.GetEndPoints().Single());
+        async Task<bool> ConnectedAsync() => (await server.ClientListAsync()).Any(client => client.Name == clientName);
+
+        await connector.LoadAsync(CancellationToken.None);
+        Assert.That(await ConnectedAsync(), Is.True, "Connected while loading");
+
+        await connector.DisposeAsync();
+
+        // Redis may take a moment to drop the closed sockets from CLIENT LIST.
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        while (await ConnectedAsync())
+        {
+            await Task.Delay(50, deadline.Token);
+        }
+    }
+
     private async Task PublishAsync(UserDataSet data, string version)
     {
         foreach (var batch in data.Users.Chunk(1000))

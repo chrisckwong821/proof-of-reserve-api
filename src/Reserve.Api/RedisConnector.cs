@@ -6,8 +6,11 @@ namespace Reserve.Api;
 
 public sealed record RedisManifest(string Version, string Key, int Count);
 
-public sealed class RedisConnector : IDisposable
+public sealed class RedisConnector : IDisposable, IAsyncDisposable
 {
+    // Upper bound on waiting for an unfinished connect during shutdown.
+    private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
+
     private readonly ReserveOptions options;
     private readonly Lazy<Task<ConnectionMultiplexer>> connection;
 
@@ -30,7 +33,7 @@ public sealed class RedisConnector : IDisposable
         }
 
         var manifest = JsonSerializer.Deserialize<RedisManifest>(
-            json, new JsonSerializerOptions(JsonSerializerDefaults.Web))
+            json, JsonSerializerOptions.Web)
             ?? throw new InvalidDataException("Invalid Redis reserve manifest.");
 
         if (string.IsNullOrWhiteSpace(manifest.Version) ||
@@ -71,20 +74,58 @@ public sealed class RedisConnector : IDisposable
         return new UserDataSet(manifest.Version, users.Values.ToArray());
     }
 
-    // Close the shared Redis connection, including one that completes after cancellation.
+    // Used by the host at shutdown: close the connection and wait for it, with a bounded wait for an unfinished connect.
+    public async ValueTask DisposeAsync()
+    {
+        if (!connection.IsValueCreated)
+        {
+            return;
+        }
+
+        ConnectionMultiplexer multiplexer;
+        try
+        {
+            multiplexer = await connection.Value.WaitAsync(DisposeTimeout);
+        }
+        catch (TimeoutException)
+        {
+            DisposeWhenConnected();
+            return;
+        }
+        catch (Exception)
+        {
+            return; // The connect failed, so there is nothing to close.
+        }
+
+        await multiplexer.CloseAsync(allowCommandsToComplete: true);
+        await multiplexer.DisposeAsync();
+    }
+
+    // Close now if connected; otherwise close the connection once its connect finishes.
     public void Dispose()
     {
-        if (connection.IsValueCreated)
+        if (!connection.IsValueCreated)
         {
-            _ = connection.Value.ContinueWith(
-                task =>
-                {
-                    if (task.Status == TaskStatus.RanToCompletion)
-                    {
-                        task.Result.Dispose();
-                    }
-                },
-                TaskScheduler.Default);
+            return;
+        }
+
+        if (connection.Value.IsCompletedSuccessfully)
+        {
+            connection.Value.Result.Dispose();
+        }
+        else
+        {
+            DisposeWhenConnected();
         }
     }
+
+    private void DisposeWhenConnected() => _ = connection.Value.ContinueWith(
+        task =>
+        {
+            if (task.IsCompletedSuccessfully)
+            {
+                task.Result.Dispose();
+            }
+        },
+        TaskScheduler.Default);
 }

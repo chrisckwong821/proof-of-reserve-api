@@ -9,7 +9,7 @@ namespace Reserve.Api;
 // One component owns loading, daily refresh, the root cache, and the bounded proof cache.
 public sealed class ReserveCache : BackgroundService
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = JsonSerializerOptions.Web;
     private readonly ReserveOptions options;
     private readonly ILogger<ReserveCache> logger;
     private readonly Func<CancellationToken, Task<UserDataSet>> loadUsers;
@@ -160,7 +160,7 @@ public sealed class ReserveCache : BackgroundService
 
         string[] leaves = ordered.Select(user => user.Serialize()).ToArray();
         cancellationToken.ThrowIfCancellationRequested();
-        var tree = MerkleTree.CreateSnapshot(leaves, "ProofOfReserve_Leaf", "ProofOfReserve_Branch");
+        var tree = MerkleTree.CreateSnapshot(leaves, ProofTags.Leaf, ProofTags.Branch);
         cancellationToken.ThrowIfCancellationRequested();
 
         var users = ordered.Select((user, index) => (user.Id, index, user.Balance))
