@@ -78,3 +78,14 @@ signature = Sign(privateKey, root | userCount | dataVersion)
 GET /api/reserves/root → { …, "signature": "3045…", "keyId": "2026-11" }
 client: Verify(publicKey, root | userCount | dataVersion, signature) → true
 ```
+
+**9. Merkle sum tree**
+- The current root commits only to the list of leaves, **and because** sibling hashes carry no amounts, a user can prove their balance is *included* but nobody can prove what the balances *add up to*. An operator could even add fake negative accounts to shrink the total, **and** every honest proof would still pass.
+- **If** each node also commits to the sum of the balances below it, every user can check that their path adds up to a published total with no negative subtrees, **so** the root proves total liabilities, not just membership.
+```text
+today:    node = H("ProofOfReserve_Branch", left ‖ right)                    → no total
+sum tree: node = H("ProofOfReserve_Branch", leftHash ‖ leftSum ‖ rightHash ‖ rightSum)
+          nodeSum = leftSum + rightSum
+
+user checks along their path:  parentSum == mySum + siblingSum,  siblingSum >= 0,  rootSum == published total
+```
