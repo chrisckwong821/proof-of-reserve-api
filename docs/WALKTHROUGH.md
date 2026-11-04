@@ -309,7 +309,7 @@ A lookup table for the framework and library types the server uses, in plain wor
 | --- | --- |
 | `record` | A small immutable data class, such as `UserAccount(Id, Balance)`, with equality built in. |
 | `FrozenDictionary` | A read-only dictionary that's very fast to look up. Ideal for a snapshot that never changes. |
-| `MemoryCache` | An in-memory cache with a size limit. It holds proof JSON. `Compact(1.0)` empties it. |
+| `MemoryCache` | An in-memory cache with a size limit. It holds proof JSON. `Clear()` empties it. |
 | `JsonSerializer.SerializeToUtf8Bytes` | Turns an object into JSON bytes. It's done once, so requests can send stored bytes. |
 
 **Logging**
