@@ -121,8 +121,71 @@ public class RefreshTests
             await Task.Delay(10, cancellationToken);
         }
 
-        Assert.That(DateTimeOffset.UtcNow, Is.GreaterThanOrEqualTo(scheduled));
+        Assert.That(cache.Current.Root.GeneratedAtUtc, Is.GreaterThanOrEqualTo(scheduled),
+            "The refresh must not run before its scheduled time.");
         Assert.That(cache.Current.Root.Root, Is.Not.EqualTo(Fixtures.ExampleRoot));
         Assert.That(timed.Source.Reads, Is.EqualTo(2));
+    }
+
+    [Test]
+    [CancelAfter(20_000)]
+    public async Task FailedScheduledRefreshIsRetriedUntilItSucceeds(CancellationToken cancellationToken)
+    {
+        DateTimeOffset scheduled = DateTimeOffset.UtcNow.AddSeconds(3);
+        await using var timed = await TestApp.StartAsync(
+            example,
+            "--Reserve:RefreshTimeUtc", scheduled.TimeOfDay.ToString("c", CultureInfo.InvariantCulture),
+            "--Reserve:RefreshRetryDelay", "00:00:00.1",
+            "--Reserve:RefreshRetryMaxDelay", "00:00:00.2");
+        var startup = timed.Cache.Current;
+        timed.Source.Data = new UserDataSet("next", [new UserAccount(1, 999), .. example.Users.Skip(1)]);
+        timed.Source.FailuresRemaining = 2;
+
+        while (timed.Cache.Current.Root.DataVersion != "next")
+        {
+            if (timed.Source.Reads > 1)
+            {
+                Assert.That(timed.Cache.Current, Is.SameAs(startup).Or.Property("Root").Property("DataVersion")
+                    .EqualTo("next"), "The old snapshot keeps serving while retries run.");
+            }
+
+            await Task.Delay(10, cancellationToken);
+        }
+
+        Assert.That(timed.Source.Reads, Is.EqualTo(4), "Startup load, two failed attempts, one successful retry.");
+    }
+
+    // Defaults: first retry after 1 minute, doubling, capped at 15 minutes.
+    [TestCase(1, 1)]
+    [TestCase(2, 2)]
+    [TestCase(3, 4)]
+    [TestCase(4, 8)]
+    [TestCase(5, 15)]
+    [TestCase(6, 15)]
+    [TestCase(1000, 15)]
+    public void RetryDelayDoublesUpToTheCap(int failedAttempts, int expectedMinutes)
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        var delay = RefreshScheduler.GetRetryDelay(server.Options, failedAttempts, now, now.AddDays(1));
+
+        Assert.That(delay, Is.EqualTo(TimeSpan.FromMinutes(expectedMinutes)));
+    }
+
+    [Test]
+    public void RetriesStopBeforeTheNextScheduledRefresh()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        Assert.That(RefreshScheduler.GetRetryDelay(server.Options, 1, now, now.AddSeconds(30)), Is.Null);
+    }
+
+    [Test]
+    public void ZeroRetryDelayTurnsRetriesOff()
+    {
+        var now = DateTimeOffset.UtcNow;
+        server.Options.RefreshRetryDelay = TimeSpan.Zero;
+
+        Assert.That(RefreshScheduler.GetRetryDelay(server.Options, 1, now, now.AddDays(1)), Is.Null);
     }
 }

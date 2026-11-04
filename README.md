@@ -61,13 +61,14 @@ curl http://localhost:5080/api/reserves/users/3/proof
 
 ```text
 Program.cs → ReserveApplication.cs (settings, two endpoints, /health)
-    → ReserveCache (root/proof lookup and daily refresh)
+    → RefreshScheduler (startup load, daily refresh, retries)
+    → ReserveCache (snapshot, root/proof lookup, proof cache)
         → RedisConnector (Redis only)
         → tagged-merkle (tree and proofs)
     → SnapshotHealthCheck, HeartbeatService, RequestStats (monitoring)
 ```
 - `RedisConnector` is the only user-data source;
-- Snapshot construction and the refresh timer live in the cache component; `Models.cs` contains only data records, settings, and the settings validator.
+- Snapshot construction lives in the cache component and the timer in `RefreshScheduler`; `Models.cs` contains only data records, settings, and the settings validator.
 
 ## Run
 
@@ -156,7 +157,9 @@ Validate → sort IDs → serialize tuples → build immutable Merkle tree
 - **Root cache:** JSON is created once per snapshot and reused until a successful refresh replaces it.
 - **Refresh:** load once at startup, then rebuild daily at `00:10 UTC`. Set `Reserve:RefreshTimeUtc` in `appsettings.json` (or `Reserve__RefreshTimeUtc`) to another UTC clock time; this is a time of day, not an interval.
 - **Consistency:** each request captures one complete snapshot; a replacement cannot mix old balances with a new root, and proof cache keys never cross snapshot versions.
-- **Failure:** a failed refresh keeps the last valid snapshot and logs the error; the next attempt is at the following daily scheduled time, so monitor `/health` (see below) for stale data.
+- **Failure and retry:** a failed scheduled refresh keeps the last valid snapshot, logs the error, and retries after `Reserve:RefreshRetryDelay` (default `00:01:00`). The wait doubles each time up to `Reserve:RefreshRetryMaxDelay` (default `00:15:00`): 1, 2, 4, 8, then every 15 minutes.
+- Retries stop when one succeeds or when the next scheduled refresh would come first. `RefreshRetryDelay` `00:00:00` turns retries off.
+- If the first load at startup fails, the server does not start; that load is not retried. Monitor `/health` (see below) for stale data.
 - **HTTP caching:** both APIs send `ETag` and `Cache-Control: private, no-cache`; a matching `If-None-Match` returns `304` after revalidation.
 
 ```json
@@ -172,7 +175,7 @@ Configuration values live only in `src/Reserve.Api/appsettings.json`;
   "data":{"snapshotId":"2742e1…","dataVersion":"bdef87…","userCount":8,
           "generatedAtUtc":"2026-11-04T10:43:41.98+00:00","nextRefreshUtc":"2026-11-05T00:10:00+00:00"}}}}
 ```
-- **Stale** means the snapshot is older than the most recent scheduled refresh and `Reserve:StaleGracePeriod` (default `00:30:00`) has passed since that refresh was due.
+- **Stale** means the snapshot is older than the most recent scheduled refresh and `Reserve:StaleGracePeriod` (default `00:30:00`) has passed since that refresh was due. With the default settings, retries at 1, 2, 4, 8 and 15 minutes all fit inside the grace period, so `/health` turns unhealthy only if they all fail.
 - Use it for alerts or a load-balancer readiness check. Avoid it as a liveness probe that restarts the server: if Redis is down, a restarted server cannot load data and will not start.
 
 **Logs at the default level (Information):**
@@ -181,7 +184,8 @@ Configuration values live only in `src/Reserve.Api/appsettings.json`;
 | --- | --- |
 | Startup and each successful refresh | `Published reserve snapshot {id}: {n} users, data version {v}, root {hash}, loaded in {ms} ms` |
 | After each load | `Next reserve refresh scheduled at {time}` |
-| Failed refresh (Error) | `Refresh failed; keeping snapshot {id}` with the exception |
+| Failed refresh attempt (Error) | `Refresh failed; keeping snapshot {id} (attempt {n}). Retrying in {delay}` with the exception, or `… No more retries before the next scheduled refresh at {time}`. The line still starts with the old `Refresh failed; keeping snapshot` text, so existing log alerts keep matching. |
+| Refresh recovered after retrying | `Refresh succeeded on attempt {n}` |
 | Every `Reserve:HeartbeatInterval` (default `00:05:00`; `00:00:00` turns it off) | `Heartbeat: healthy; snapshot {id} ({n} users) is {age} old, next refresh {time}. Last {interval}: root {count} ({count} not modified), proofs {count} from cache and {count} newly built ({count} not modified), {count} not found, {count} rejected` |
 
 - The heartbeat is logged as a **Warning** and says `STALE` when the snapshot is stale.

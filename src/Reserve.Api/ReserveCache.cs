@@ -6,8 +6,8 @@ using TaggedMerkle;
 
 namespace Reserve.Api;
 
-// One component owns loading, daily refresh, the root cache, and the bounded proof cache.
-public sealed class ReserveCache : BackgroundService
+// Holds the published snapshot and the bounded proof cache; RefreshScheduler decides when to refresh.
+public sealed class ReserveCache : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = JsonSerializerOptions.Web;
     private readonly ReserveOptions options;
@@ -34,45 +34,6 @@ public sealed class ReserveCache : BackgroundService
 
     // The published snapshot, or null before the first load completes.
     public Snapshot? CurrentOrDefault => Volatile.Read(ref current);
-
-    // Load the first snapshot before the server starts accepting requests.
-    public override async Task StartAsync(CancellationToken cancellationToken)
-    {
-        await RefreshAsync(cancellationToken);
-        await base.StartAsync(cancellationToken);
-    }
-
-    // Wait for the configured UTC time each day; retain the previous snapshot if refreshing fails.
-    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-    {
-        try
-        {
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                DateTimeOffset now = DateTimeOffset.UtcNow;
-                DateTimeOffset next = options.GetNextRefreshUtc(now);
-                logger.LogInformation("Next reserve refresh scheduled at {NextRefreshUtc:u}", next);
-                await Task.Delay(next - now, stoppingToken);
-
-                try
-                {
-                    await RefreshAsync(stoppingToken);
-                }
-                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                {
-                    break;
-                }
-                catch (Exception error)
-                {
-                    logger.LogError(error, "Refresh failed; keeping snapshot {SnapshotId}", Current.Root.SnapshotId);
-                }
-            }
-        }
-        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-        {
-            // Cancellation of the scheduled wait is expected during normal shutdown.
-        }
-    }
 
     // Serialize refreshes and atomically publish the completed replacement snapshot.
     public async Task RefreshAsync(CancellationToken cancellationToken = default)
@@ -175,10 +136,9 @@ public sealed class ReserveCache : BackgroundService
         return new Snapshot(root, JsonSerializer.SerializeToUtf8Bytes(root, JsonOptions), tree, users);
     }
 
-    // Request background cancellation and dispose the proof cache and refresh semaphore.
-    public override void Dispose()
+    // Dispose the proof cache and refresh semaphore.
+    public void Dispose()
     {
-        base.Dispose();
         proofs.Dispose();
         refreshGate.Dispose();
     }

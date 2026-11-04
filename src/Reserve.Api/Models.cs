@@ -47,6 +47,12 @@ public sealed class ReserveOptions
     // Optional. How long after a scheduled refresh /health still reports healthy if no new snapshot has appeared.
     public TimeSpan StaleGracePeriod { get; set; } = TimeSpan.FromMinutes(30);
 
+    // Optional. First wait before retrying a failed scheduled refresh; doubles each time. 00:00:00 turns retries off.
+    public TimeSpan RefreshRetryDelay { get; set; } = TimeSpan.FromMinutes(1);
+
+    // Optional. Longest wait between retries.
+    public TimeSpan RefreshRetryMaxDelay { get; set; } = TimeSpan.FromMinutes(15);
+
     // The validated refresh time. RefreshTimeUtc stays nullable so a missing setting is rejected, not read as 00:00.
     public TimeSpan RefreshTime => RefreshTimeUtc
         ?? throw new InvalidOperationException("RefreshTimeUtc is not configured.");
@@ -76,6 +82,16 @@ public sealed class ReserveOptions
         if (StaleGracePeriod < TimeSpan.Zero || StaleGracePeriod >= TimeSpan.FromDays(1))
         {
             throw new ArgumentException("StaleGracePeriod must be between 00:00:00 and 23:59:59.9999999.");
+        }
+
+        if (RefreshRetryDelay < TimeSpan.Zero || RefreshRetryDelay >= TimeSpan.FromDays(1))
+        {
+            throw new ArgumentException("RefreshRetryDelay must be zero (off) or positive and under one day.");
+        }
+
+        if (RefreshRetryMaxDelay < RefreshRetryDelay || RefreshRetryMaxDelay >= TimeSpan.FromDays(1))
+        {
+            throw new ArgumentException("RefreshRetryMaxDelay must be at least RefreshRetryDelay and under one day.");
         }
     }
 

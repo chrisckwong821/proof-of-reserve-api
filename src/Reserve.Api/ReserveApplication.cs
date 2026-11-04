@@ -6,7 +6,7 @@ namespace Reserve.Api;
 
 public static partial class ReserveApplication
 {
-    // Configure the Redis-backed cache and two endpoints; tests can supply an in-memory loader.
+    // Configure the Redis-backed cache, refresh scheduler and endpoints; tests can supply an in-memory loader.
     public static WebApplication Build(
         string[] args,
         Func<CancellationToken, Task<UserDataSet>>? loadUsers = null)
@@ -36,7 +36,7 @@ public static partial class ReserveApplication
                 services.GetRequiredService<ILogger<ReserveCache>>(),
                 load);
         });
-        builder.Services.AddHostedService(services => services.GetRequiredService<ReserveCache>());
+        builder.Services.AddHostedService<RefreshScheduler>();
         builder.Services.AddSingleton<RequestStats>();
         builder.Services.AddHostedService<HeartbeatService>();
         builder.Services.AddHealthChecks().AddCheck<SnapshotHealthCheck>("snapshot");
