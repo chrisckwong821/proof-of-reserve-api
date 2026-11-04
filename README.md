@@ -47,7 +47,7 @@ curl http://localhost:5080/api/reserves/users/3/proof
 
 | Directory | Purpose |
 | --- | --- |
-| `src/Reserve.Api/` | The running server: two endpoints, the Redis connector, cache, and settings. |
+| `src/Reserve.Api/` | The running server, grouped into folders by job; see [How the server is organized](#how-the-server-is-organized). |
 | `tests/Reserve.Tests/` | NUnit tests for responses, validation, scheduling, caching, and Redis. |
 | `tests/Reserve.Tests/Fixtures/` | Saved eight-user and 100k mock datasets, used only for testing and seeding test Redis. |
 | `tests/` | Contains the full-system runner and `stress.py` for repeatable HTTP load tests. |
@@ -59,17 +59,58 @@ curl http://localhost:5080/api/reserves/users/3/proof
 
 ## How the server is organized
 
+The server keeps one immutable **snapshot** in memory: every user, the Merkle tree, and the root JSON. Requests only read the current snapshot; background jobs build a replacement and swap it in.
+
 ```text
-Program.cs → ReserveApplication.cs (settings, two endpoints, /health)
-    → RefreshScheduler (startup load, daily refresh, retries)
-    → ManifestPoller (optional: refresh when the Redis manifest version changes)
-    → ReserveCache (snapshot, root/proof lookup, proof cache)
-        → RedisConnector (Redis only)
-        → tagged-merkle (tree and proofs)
-    → SnapshotHealthCheck, HeartbeatService, RequestStats (monitoring)
+Refresh (background: build a new snapshot, then swap it in)
+  RefreshScheduler ─┐
+  ManifestPoller   ─┴─▶ ReserveCache.RefreshAsync ─▶ RedisConnector ─▶ Redis
+                              └─▶ BuildSnapshot (tagged-merkle) ─▶ publish snapshot
+
+Requests (read only: use the current snapshot)
+  GET root / proof ─▶ ReserveEndpoints ─▶ ReserveCache.Current ─▶ JSON or 304
+                            └─▶ RequestStats ─▶ HeartbeatService (log line)
+  GET /health      ─▶ SnapshotHealthCheck ─▶ ReserveCache.Current
 ```
-- `RedisConnector` is the only user-data source;
-- Snapshot construction lives in the cache component and the timer in `RefreshScheduler`; `Models.cs` contains only data records, settings, and the settings validator.
+
+**Serving a request:** `ReserveEndpoints` takes the current snapshot. The root response is pre-built JSON; a proof comes from the proof cache, or is built from the tree and cached. A matching `ETag` returns `304`.
+
+**Refreshing data:** `RefreshScheduler` and `ManifestPoller` decide *when*. `ReserveCache.RefreshAsync` does the work: it loads users through `RedisConnector`, builds the tree with `tagged-merkle`, and publishes the new snapshot in one step. Refreshes run one at a time, and a failure keeps the old snapshot serving.
+
+| Folder (`src/Reserve.Api/`) | Contents |
+| --- | --- |
+| *(root)* | `Program.cs` (entry point), `ReserveApplication.cs` (wires everything together), `appsettings.json` |
+| `Endpoints/` | `ReserveEndpoints`: the root, proof and `/health` routes, ETag handling, per-request Debug logs |
+| `Snapshots/` | `ReserveCache`: current snapshot, `RefreshAsync`, `BuildSnapshot`, proof cache. `ProofTags`: Merkle hash tags |
+| `Refresh/` | `RefreshScheduler`: startup load, daily refresh, retry with backoff. `ManifestPoller`: optional mid-day version check |
+| `Data/` | `RedisConnector`: the only user-data source; reads the manifest and its immutable user hash |
+| `Monitoring/` | `SnapshotHealthCheck` (`/health`), `HeartbeatService` (periodic log line), `RequestStats` (request counters) |
+| `Configuration/` | `ReserveOptions` (all `Reserve:*` settings) and its startup validator; see [Settings: appsettings.json and ReserveOptions](#settings-appsettingsjson-and-reserveoptions) |
+| `Models/` | `UserAccount`/`UserDataSet` (loaded data) and `RootResponse`/`ProofResponse` (API JSON) |
+
+- Every class stays in the `Reserve.Api` namespace whatever its folder, so code that uses these types and log-level settings keyed by class name (e.g. `Reserve.Api.ReserveCache`) keep working.
+
+### Settings: appsettings.json and ReserveOptions
+
+The two files play different roles; they are not two copies of the settings.
+
+| | `appsettings.json` | `Configuration/ReserveOptions.cs` |
+| --- | --- | --- |
+| Holds | The **values** this deployment uses | The **shape**: each setting's name and type, the validation rules, and defaults for optional settings |
+| Read by | People configuring the server | The code, e.g. `options.RefreshTime` rather than a string lookup |
+
+At startup, ASP.NET Core combines these sources, each overriding the one before, and copies the result into one `ReserveOptions`:
+
+```text
+appsettings.json  →  appsettings.{Environment}.json  →  environment variables  →  command-line arguments
+                                         (Reserve__RefreshTimeUtc=01:00:00)   (--Reserve:RefreshTimeUtc 01:00:00)
+```
+
+The validator then checks the result; an invalid or missing required value stops the server before it serves anything.
+
+- **Required settings** (`RefreshTimeUtc`, `ProofCacheEntries`, `RedisConnection`, `RedisManifestKey`, `RedisUserKeyPrefix`) have no default in `ReserveOptions`; leaving one out stops startup.
+- **Optional settings** (`HeartbeatInterval`, `StaleGracePeriod`, `RefreshRetryDelay`, `RefreshRetryMaxDelay`, `ManifestPollInterval`) have a default in `ReserveOptions`, e.g. `HeartbeatInterval = 5 minutes`. The default applies only when no source sets the key.
+- The shipped `appsettings.json` lists the optional settings too, with the same values as the defaults, so every setting is visible in one file. If you change a default in `ReserveOptions`, change the shipped value as well: the file's value wins whenever the key is present.
 
 ## Run
 
