@@ -39,7 +39,7 @@ public class RefreshTests
     public void FailedRefreshKeepsLastSnapshot()
     {
         var previous = server.Cache.Current;
-        server.Source.Fail = true;
+        server.Source.FailuresRemaining = int.MaxValue;
 
         Assert.ThrowsAsync<IOException>(() => server.Cache.RefreshAsync());
         Assert.That(server.Cache.Current, Is.SameAs(previous));

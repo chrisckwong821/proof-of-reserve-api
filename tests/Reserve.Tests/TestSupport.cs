@@ -70,9 +70,8 @@ public sealed class MutableSource(UserDataSet data)
     private int reads;
 
     public UserDataSet Data { get; set; } = data;
-    public bool Fail { get; set; }
 
-    // Fail this many upcoming loads, then succeed.
+    // Fail this many upcoming loads, then succeed; int.MaxValue means keep failing.
     public int FailuresRemaining { get; set; }
     public TaskCompletionSource? Gate { get; set; }
     public int Reads => Volatile.Read(ref reads);
@@ -96,8 +95,9 @@ public sealed class MutableSource(UserDataSet data)
     public async Task<UserDataSet> LoadAsync(CancellationToken cancellationToken)
     {
         Interlocked.Increment(ref reads);
-        if (Fail || (FailuresRemaining > 0 && FailuresRemaining-- > 0))
+        if (FailuresRemaining > 0)
         {
+            FailuresRemaining--;
             throw new IOException("Simulated source failure.");
         }
 

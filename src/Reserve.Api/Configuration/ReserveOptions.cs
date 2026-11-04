@@ -29,48 +29,47 @@ public sealed class ReserveOptions
     public TimeSpan RefreshTime => RefreshTimeUtc
         ?? throw new InvalidOperationException("RefreshTimeUtc is not configured.");
 
-    // Reject missing or invalid configuration before the server starts.
+    // Every problem with the current values, one message per setting; empty when the settings are valid.
+    public IReadOnlyList<string> GetErrors()
+    {
+        var errors = new List<string>();
+        void Require(bool valid, string message)
+        {
+            if (!valid)
+            {
+                errors.Add(message);
+            }
+        }
+
+        Require(!string.IsNullOrWhiteSpace(RedisConnection), "RedisConnection is required.");
+        Require(!string.IsNullOrWhiteSpace(RedisManifestKey), "RedisManifestKey is required.");
+        Require(!string.IsNullOrWhiteSpace(RedisUserKeyPrefix), "RedisUserKeyPrefix is required.");
+        Require(RefreshTimeUtc is { } time && IsUnderOneDay(time),
+            "RefreshTimeUtc is required and must be between 00:00:00 and 23:59:59.9999999.");
+        Require(ProofCacheEntries >= 1, "ProofCacheEntries must be positive.");
+        Require(HeartbeatInterval >= TimeSpan.Zero, "HeartbeatInterval must be zero (off) or positive.");
+        Require(IsUnderOneDay(StaleGracePeriod),
+            "StaleGracePeriod must be between 00:00:00 and 23:59:59.9999999.");
+        Require(IsUnderOneDay(RefreshRetryDelay),
+            "RefreshRetryDelay must be zero (off) or positive and under one day.");
+        Require(RefreshRetryMaxDelay >= RefreshRetryDelay && IsUnderOneDay(RefreshRetryMaxDelay),
+            "RefreshRetryMaxDelay must be at least RefreshRetryDelay and under one day.");
+        Require(IsUnderOneDay(ManifestPollInterval),
+            "ManifestPollInterval must be zero (off) or positive and under one day.");
+        return errors;
+    }
+
+    // Throws an ArgumentException listing every invalid setting.
     public void Validate()
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(RedisConnection);
-        ArgumentException.ThrowIfNullOrWhiteSpace(RedisManifestKey);
-        ArgumentException.ThrowIfNullOrWhiteSpace(RedisUserKeyPrefix);
-
-        if (RefreshTimeUtc is not { } time || time < TimeSpan.Zero || time >= TimeSpan.FromDays(1))
+        var errors = GetErrors();
+        if (errors.Count > 0)
         {
-            throw new ArgumentException("RefreshTimeUtc is required and must be between 00:00:00 and 23:59:59.9999999.");
-        }
-
-        if (ProofCacheEntries < 1)
-        {
-            throw new ArgumentException("ProofCacheEntries must be positive.");
-        }
-
-        if (HeartbeatInterval < TimeSpan.Zero)
-        {
-            throw new ArgumentException("HeartbeatInterval must be zero (off) or positive.");
-        }
-
-        if (StaleGracePeriod < TimeSpan.Zero || StaleGracePeriod >= TimeSpan.FromDays(1))
-        {
-            throw new ArgumentException("StaleGracePeriod must be between 00:00:00 and 23:59:59.9999999.");
-        }
-
-        if (RefreshRetryDelay < TimeSpan.Zero || RefreshRetryDelay >= TimeSpan.FromDays(1))
-        {
-            throw new ArgumentException("RefreshRetryDelay must be zero (off) or positive and under one day.");
-        }
-
-        if (RefreshRetryMaxDelay < RefreshRetryDelay || RefreshRetryMaxDelay >= TimeSpan.FromDays(1))
-        {
-            throw new ArgumentException("RefreshRetryMaxDelay must be at least RefreshRetryDelay and under one day.");
-        }
-
-        if (ManifestPollInterval < TimeSpan.Zero || ManifestPollInterval >= TimeSpan.FromDays(1))
-        {
-            throw new ArgumentException("ManifestPollInterval must be zero (off) or positive and under one day.");
+            throw new ArgumentException(string.Join(" ", errors));
         }
     }
+
+    private static bool IsUnderOneDay(TimeSpan value) => value >= TimeSpan.Zero && value < TimeSpan.FromDays(1);
 
     // Return the next occurrence of the configured UTC time, rolling over to tomorrow when needed.
     public DateTimeOffset GetNextRefreshUtc(DateTimeOffset now)
@@ -81,19 +80,12 @@ public sealed class ReserveOptions
     }
 }
 
-// Runs ReserveOptions.Validate() through the options pipeline so failures surface as OptionsValidationException.
+// Plugs the checks into ASP.NET Core options validation, so startup fails with every invalid setting listed.
 public sealed class ReserveOptionsValidator : IValidateOptions<ReserveOptions>
 {
     public ValidateOptionsResult Validate(string? name, ReserveOptions options)
     {
-        try
-        {
-            options.Validate();
-            return ValidateOptionsResult.Success;
-        }
-        catch (ArgumentException error)
-        {
-            return ValidateOptionsResult.Fail(error.Message);
-        }
+        var errors = options.GetErrors();
+        return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
     }
 }

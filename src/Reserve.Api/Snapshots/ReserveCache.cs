@@ -6,24 +6,23 @@ using TaggedMerkle;
 
 namespace Reserve.Api;
 
-// Holds the published snapshot and the bounded proof cache; RefreshScheduler decides when to refresh.
+// The snapshot store: holds the published snapshot and the bounded proof cache, and builds replacements.
+// RefreshScheduler and ManifestPoller decide when to refresh. (The name predates that split and is kept
+// so the log category Reserve.Api.ReserveCache does not change.)
 public sealed class ReserveCache : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = JsonSerializerOptions.Web;
-    private readonly ReserveOptions options;
     private readonly ILogger<ReserveCache> logger;
     private readonly Func<CancellationToken, Task<UserDataSet>> loadUsers;
     private readonly SemaphoreSlim refreshGate = new(1, 1);
     private readonly MemoryCache proofs;
     private Snapshot? current;
 
-    // Set up the bounded proof cache and the loader used for snapshot refreshes.
     public ReserveCache(
         ReserveOptions options,
         ILogger<ReserveCache> logger,
         Func<CancellationToken, Task<UserDataSet>> loadUsers)
     {
-        this.options = options;
         this.logger = logger;
         this.loadUsers = loadUsers;
         proofs = new MemoryCache(new MemoryCacheOptions { SizeLimit = options.ProofCacheEntries });
@@ -89,11 +88,8 @@ public sealed class ReserveCache : IDisposable
         byte[] json = JsonSerializer.SerializeToUtf8Bytes(
             new ProofResponse(snapshot.Root.SnapshotId, snapshot.Root.Root, userId, user.Balance, siblings),
             JsonOptions);
-        proofs.Set(key, json, new MemoryCacheEntryOptions
-        {
-            Size = 1,
-            AbsoluteExpiration = options.GetNextRefreshUtc(DateTimeOffset.UtcNow)
-        });
+        // No time-based expiry: RefreshAsync clears the cache when it publishes a new snapshot.
+        proofs.Set(key, json, new MemoryCacheEntryOptions { Size = 1 });
 
         return json;
     }
@@ -102,8 +98,8 @@ public sealed class ReserveCache : IDisposable
     public static Snapshot BuildSnapshot(UserDataSet data, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(data.Users);
-        var ordered = (UserAccount[])data.Users.Clone();
-        foreach (var user in ordered)
+        var users = (UserAccount[])data.Users.Clone();
+        foreach (var user in users)
         {
             cancellationToken.ThrowIfCancellationRequested();
             if (user is null || user.Id <= 0 || user.Balance < 0)
@@ -112,33 +108,34 @@ public sealed class ReserveCache : IDisposable
             }
         }
 
-        Array.Sort(ordered, (a, b) => a.Id.CompareTo(b.Id));
-        for (int i = 1; i < ordered.Length; i++)
+        Array.Sort(users, (a, b) => a.Id.CompareTo(b.Id));
+        for (int i = 1; i < users.Length; i++)
         {
-            if (ordered[i - 1].Id == ordered[i].Id)
+            if (users[i - 1].Id == users[i].Id)
             {
-                throw new InvalidDataException($"Duplicate user ID: {ordered[i].Id}.");
+                throw new InvalidDataException($"Duplicate user ID: {users[i].Id}.");
             }
         }
 
-        string[] leaves = ordered.Select(user => user.Serialize()).ToArray();
+        string[] leaves = users.Select(user => user.Serialize()).ToArray();
         cancellationToken.ThrowIfCancellationRequested();
         var tree = MerkleTree.CreateSnapshot(leaves, ProofTags.Leaf, ProofTags.Branch);
         cancellationToken.ThrowIfCancellationRequested();
 
-        var users = ordered.Select((user, index) => (user.Id, index, user.Balance))
-            .ToFrozenDictionary(item => item.Id, item => (item.index, item.Balance));
+        // A user's position in the sorted array is their leaf index in the tree.
+        var userIndex = users
+            .Select((user, index) => KeyValuePair.Create(user.Id, (index, user.Balance)))
+            .ToFrozenDictionary();
         var root = new RootResponse(
             Guid.NewGuid().ToString("N"),
             tree.RootHex,
-            ordered.Length,
+            users.Length,
             DateTimeOffset.UtcNow,
             data.Version);
 
-        return new Snapshot(root, JsonSerializer.SerializeToUtf8Bytes(root, JsonOptions), tree, users);
+        return new Snapshot(root, JsonSerializer.SerializeToUtf8Bytes(root, JsonOptions), tree, userIndex);
     }
 
-    // Dispose the proof cache and refresh semaphore.
     public void Dispose()
     {
         proofs.Dispose();

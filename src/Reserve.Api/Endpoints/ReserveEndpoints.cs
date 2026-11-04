@@ -6,77 +6,83 @@ namespace Reserve.Api;
 // The HTTP surface: GET root, GET proof and /health, with ETag revalidation and per-request Debug logs.
 public static partial class ReserveEndpoints
 {
+    // Per-request Debug lines go to this category; enable with --Logging:LogLevel:Reserve.Api.Requests=Debug.
+    private const string RequestLogCategory = "Reserve.Api.Requests";
+
     public static WebApplication MapReserveEndpoints(this WebApplication app)
     {
-        // Per-request lines are Debug so they stay off unless enabled; the heartbeat carries the counts.
-        var requestLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Reserve.Api.Requests");
+        var log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(RequestLogCategory);
 
-        // Report whether the cached snapshot is current; 503 when the last scheduled refresh was missed.
         app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = WriteHealthJson });
-
-        // Return the root from one complete, currently published snapshot.
-        app.MapGet("/api/reserves/root", (HttpContext context, ReserveCache cache, RequestStats stats) =>
-        {
-            var snapshot = cache.Current;
-            bool notModified = SetCacheHeaders(context, snapshot.Root.SnapshotId);
-            stats.RecordRoot(notModified);
-            LogRoot(requestLog, notModified ? 304 : 200, snapshot.Root.SnapshotId);
-            return notModified
-                ? Results.StatusCode(StatusCodes.Status304NotModified)
-                : Results.Bytes(snapshot.RootJson, "application/json");
-        });
-
-        // Return a user proof, rejecting requests pinned to a snapshot that has been replaced.
+        app.MapGet("/api/reserves/root",
+            (HttpContext context, ReserveCache cache, RequestStats stats) =>
+                GetRoot(context, cache, stats, log));
         app.MapGet("/api/reserves/users/{userId:int}/proof",
             (int userId, string? snapshotId, HttpContext context, ReserveCache cache, RequestStats stats) =>
-            {
-                if (userId <= 0)
-                {
-                    stats.RecordProofRejected();
-                    LogProofRejected(requestLog, userId, 400, "user ID must be positive");
-                    return Results.BadRequest(new
-                    {
-                        error = "User ID must be positive."
-                    });
-                }
-
-                var snapshot = cache.Current;
-                if (snapshotId is not null && snapshotId != snapshot.Root.SnapshotId)
-                {
-                    stats.RecordProofRejected();
-                    LogProofRejected(requestLog, userId, 409, "pinned snapshot was replaced");
-                    return Results.Conflict(new
-                    {
-                        error = "Snapshot changed; fetch the current root and retry.",
-                        snapshotId = snapshot.Root.SnapshotId
-                    });
-                }
-
-                byte[]? proof = cache.GetProofJson(snapshot, userId, out bool fromCache);
-                if (proof is null)
-                {
-                    stats.RecordProofNotFound();
-                    LogProofRejected(requestLog, userId, 404, "user not found");
-                    return Results.NotFound(new
-                    {
-                        error = "User not found."
-                    });
-                }
-
-                bool notModified = SetCacheHeaders(context, $"{snapshot.Root.SnapshotId}-{userId}");
-                stats.RecordProof(fromCache, notModified);
-                LogProof(
-                    requestLog, userId, notModified ? 304 : 200, fromCache ? "from cache" : "newly built",
-                    snapshot.Root.SnapshotId);
-                return notModified
-                    ? Results.StatusCode(StatusCodes.Status304NotModified)
-                    : Results.Bytes(proof, "application/json");
-            });
+                GetProof(userId, snapshotId, context, cache, stats, log));
 
         return app;
     }
 
-    // Set the snapshot ETag and caching headers; true when If-None-Match already has this version (HTTP 304).
+    // The root JSON is built once per snapshot, so every request sends the same bytes (or 304).
+    private static IResult GetRoot(HttpContext context, ReserveCache cache, RequestStats stats, ILogger log)
+    {
+        var snapshot = cache.Current;
+        string snapshotId = snapshot.Root.SnapshotId;
+
+        bool notModified = SetCacheHeaders(context, snapshotId);
+        stats.RecordRoot(notModified);
+        LogRoot(log, notModified ? 304 : 200, snapshotId);
+        return CachedJson(notModified, snapshot.RootJson);
+    }
+
+    // Reject invalid or outdated requests, then serve the proof from the cache or build it.
+    private static IResult GetProof(
+        int userId, string? pinnedSnapshotId, HttpContext context, ReserveCache cache, RequestStats stats, ILogger log)
+    {
+        if (userId <= 0)
+        {
+            stats.RecordProofRejected();
+            return Reject(log, userId, StatusCodes.Status400BadRequest, "user ID must be positive",
+                new { error = "User ID must be positive." });
+        }
+
+        var snapshot = cache.Current;
+        string snapshotId = snapshot.Root.SnapshotId;
+        if (pinnedSnapshotId is not null && pinnedSnapshotId != snapshotId)
+        {
+            stats.RecordProofRejected();
+            return Reject(log, userId, StatusCodes.Status409Conflict, "pinned snapshot was replaced",
+                new { error = "Snapshot changed; fetch the current root and retry.", snapshotId });
+        }
+
+        byte[]? proof = cache.GetProofJson(snapshot, userId, out bool fromCache);
+        if (proof is null)
+        {
+            stats.RecordProofNotFound();
+            return Reject(log, userId, StatusCodes.Status404NotFound, "user not found",
+                new { error = "User not found." });
+        }
+
+        bool notModified = SetCacheHeaders(context, $"{snapshotId}-{userId}");
+        stats.RecordProof(fromCache, notModified);
+        LogProof(log, userId, notModified ? 304 : 200, fromCache ? "from cache" : "newly built", snapshotId);
+        return CachedJson(notModified, proof);
+    }
+
+    // Log a rejected proof request and return its JSON error body.
+    private static IResult Reject(ILogger log, int userId, int statusCode, string reason, object body)
+    {
+        LogProofRejected(log, userId, statusCode, reason);
+        return Results.Json(body, statusCode: statusCode);
+    }
+
+    // 304 with no body when the client already has this version; otherwise the stored JSON bytes.
+    private static IResult CachedJson(bool notModified, byte[] json) => notModified
+        ? Results.StatusCode(StatusCodes.Status304NotModified)
+        : Results.Bytes(json, "application/json");
+
+    // Set the ETag and Cache-Control headers; returns true when If-None-Match already has this version.
     private static bool SetCacheHeaders(HttpContext context, string version)
     {
         string etag = $"\"{version}\"";

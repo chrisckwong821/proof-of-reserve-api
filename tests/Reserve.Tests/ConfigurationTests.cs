@@ -35,6 +35,25 @@ public class ConfigurationTests
         Assert.That(source.Reads, Is.Zero, "Data must not be loaded when the settings are invalid.");
     }
 
+    [Test]
+    public async Task EveryInvalidSettingIsReportedAtOnce()
+    {
+        await using var app = ReserveApplication.Build(
+            [
+                "--urls", "http://127.0.0.1:0", "--Logging:LogLevel:Default", "None",
+                "--Reserve:ProofCacheEntries", "0",
+                "--Reserve:HeartbeatInterval", "-00:00:01",
+                "--Reserve:RedisManifestKey", " "
+            ],
+            new MutableSource(await Fixtures.ExampleAsync()).LoadAsync);
+
+        var error = Assert.ThrowsAsync<OptionsValidationException>(() => app.StartAsync());
+
+        Assert.That(error!.Failures, Has.Count.EqualTo(3));
+        Assert.That(error.Message,
+            Does.Contain("ProofCacheEntries").And.Contain("HeartbeatInterval").And.Contain("RedisManifestKey"));
+    }
+
     [TestCase("RefreshTimeUtc")]
     [TestCase("ProofCacheEntries")]
     [TestCase("RedisConnection")]

@@ -99,13 +99,28 @@ public class ApiTests
         Assert.That(server.Source.Reads, Is.EqualTo(1));
     }
 
-    [TestCase(999, HttpStatusCode.NotFound)]
-    [TestCase(0, HttpStatusCode.BadRequest)]
-    public async Task UnknownAndInvalidIdsAreRejected(int userId, HttpStatusCode expected)
+    // Pins status, content type and exact body of each error response.
+    [TestCase("/api/reserves/users/999/proof", HttpStatusCode.NotFound, "{\"error\":\"User not found.\"}")]
+    [TestCase("/api/reserves/users/0/proof", HttpStatusCode.BadRequest, "{\"error\":\"User ID must be positive.\"}")]
+    public async Task UnknownAndInvalidIdsAreRejected(string path, HttpStatusCode expected, string expectedBody)
     {
-        using var response = await server.Client.GetAsync($"/api/reserves/users/{userId}/proof");
+        using var response = await server.Client.GetAsync(path);
 
         Assert.That(response.StatusCode, Is.EqualTo(expected));
+        Assert.That(response.Content.Headers.ContentType?.ToString(), Is.EqualTo("application/json; charset=utf-8"));
+        Assert.That(await response.Content.ReadAsStringAsync(), Is.EqualTo(expectedBody));
+    }
+
+    [Test]
+    public async Task PinnedOldSnapshotReturnsConflictWithCurrentId()
+    {
+        using var response = await server.Client.GetAsync("/api/reserves/users/1/proof?snapshotId=old");
+
+        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Conflict));
+        Assert.That(response.Content.Headers.ContentType?.ToString(), Is.EqualTo("application/json; charset=utf-8"));
+        Assert.That(await response.Content.ReadAsStringAsync(), Is.EqualTo(
+            "{\"error\":\"Snapshot changed; fetch the current root and retry.\"," +
+            "\"snapshotId\":\"" + server.Cache.Current.Root.SnapshotId + "\"}"));
     }
 
     [Test]
