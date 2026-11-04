@@ -11,6 +11,16 @@ Method and path | Result |
 | --- | --- |
 | `GET /api/reserves/root` | Cached root, user count, snapshot ID, generation time, and source version. |
 | `GET /api/reserves/users/{userId}/proof` | User ID, JPY balance, root, snapshot ID, and sibling tuples. |
+| `GET /health` | `200` while the snapshot is current, `503` once it is stale; see [Health and logging](#health-and-logging). |
+
+**Proof errors** (JSON body `{"error": "..."}`):
+
+| Status | When | `error` |
+| --- | --- | --- |
+| `400` | `userId` is not an integer, e.g. `abc`, `1.5`, or larger than 2147483647 | `User ID must be a positive integer.` |
+| `400` | `userId` is zero or negative | `User ID must be positive.` |
+| `404` | No user has this ID in the current snapshot | `User not found.` |
+| `409` | `?snapshotId=` names a snapshot that has been replaced; the body also has the current `snapshotId` | `Snapshot changed; fetch the current root and retry.` |
 
 **Get the root — eight-user example**
 ```

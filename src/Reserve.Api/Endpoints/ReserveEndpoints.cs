@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 
@@ -17,8 +18,9 @@ public static partial class ReserveEndpoints
         app.MapGet("/api/reserves/root",
             (HttpContext context, ReserveCache cache, RequestStats stats) =>
                 GetRoot(context, cache, stats, log));
-        app.MapGet("/api/reserves/users/{userId:int}/proof",
-            (int userId, string? snapshotId, HttpContext context, ReserveCache cache, RequestStats stats) =>
+        // userId is a string so a non-numeric ID gets a JSON 400 instead of the router's empty 404.
+        app.MapGet("/api/reserves/users/{userId}/proof",
+            (string userId, string? snapshotId, HttpContext context, ReserveCache cache, RequestStats stats) =>
                 GetProof(userId, snapshotId, context, cache, stats, log));
 
         return app;
@@ -38,8 +40,18 @@ public static partial class ReserveEndpoints
 
     // Reject invalid or outdated requests, then serve the proof from the cache or build it.
     private static IResult GetProof(
-        int userId, string? pinnedSnapshotId, HttpContext context, ReserveCache cache, RequestStats stats, ILogger log)
+        string rawUserId, string? pinnedSnapshotId, HttpContext context, ReserveCache cache, RequestStats stats,
+        ILogger log)
     {
+        // Same parsing the old {userId:int} route constraint used, so every ID accepted before is accepted now.
+        if (!int.TryParse(rawUserId, NumberStyles.Integer, CultureInfo.InvariantCulture, out int userId))
+        {
+            stats.RecordProofRejected();
+            LogInvalidUserId(log, rawUserId);
+            return Results.Json(
+                new { error = "User ID must be a positive integer." }, statusCode: StatusCodes.Status400BadRequest);
+        }
+
         if (userId <= 0)
         {
             stats.RecordProofRejected();
@@ -122,4 +134,7 @@ public static partial class ReserveEndpoints
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "GET proof for user {UserId}: {StatusCode}, {Reason}")]
     private static partial void LogProofRejected(ILogger logger, int userId, int statusCode, string reason);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "GET proof for user {UserId}: 400, user ID is not an integer")]
+    private static partial void LogInvalidUserId(ILogger logger, string userId);
 }

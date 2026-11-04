@@ -102,6 +102,13 @@ public class ApiTests
     // Pins status, content type and exact body of each error response.
     [TestCase("/api/reserves/users/999/proof", HttpStatusCode.NotFound, "{\"error\":\"User not found.\"}")]
     [TestCase("/api/reserves/users/0/proof", HttpStatusCode.BadRequest, "{\"error\":\"User ID must be positive.\"}")]
+    [TestCase("/api/reserves/users/-5/proof", HttpStatusCode.BadRequest, "{\"error\":\"User ID must be positive.\"}")]
+    [TestCase("/api/reserves/users/abc/proof", HttpStatusCode.BadRequest,
+        "{\"error\":\"User ID must be a positive integer.\"}")]
+    [TestCase("/api/reserves/users/1.5/proof", HttpStatusCode.BadRequest,
+        "{\"error\":\"User ID must be a positive integer.\"}")]
+    [TestCase("/api/reserves/users/99999999999/proof", HttpStatusCode.BadRequest,
+        "{\"error\":\"User ID must be a positive integer.\"}")]
     public async Task UnknownAndInvalidIdsAreRejected(string path, HttpStatusCode expected, string expectedBody)
     {
         using var response = await server.Client.GetAsync(path);
