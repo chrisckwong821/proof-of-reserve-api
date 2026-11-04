@@ -345,4 +345,5 @@ Example local run: macOS 15.3.2, .NET 10 Release, Redis in Docker, 100k users, 1
 | `Microsoft.NET.Test.Sdk` `18.11.0` (tests only) | Test host used by `dotnet test`. |
 
 - NuGet versions are recorded in `packages.lock.json`.
+- `tagged-merkle` is pinned to the commit tagged `v0.1.0`. Git submodules always record a commit, not a tag name; `git submodule status` shows the matching tag in brackets. To move to another release, run `git -C vendor/tagged-merkle fetch --tags` and `git -C vendor/tagged-merkle checkout <tag>`, then commit `vendor/tagged-merkle`.
 - See [StackExchange.Redis](https://github.com/StackExchange/StackExchange.Redis) and its [connection guidance](https://stackexchange.github.io/StackExchange.Redis/Basics.html).
