@@ -6,7 +6,8 @@ namespace Reserve.Api;
 
 public sealed record RedisManifest(string Version, string Key, int Count);
 
-public sealed class RedisConnector : IDisposable, IAsyncDisposable
+// The production IUserDataSource: reads the manifest and its immutable user hash from Redis.
+public sealed class RedisConnector : IUserDataSource, IDisposable, IAsyncDisposable
 {
     // Upper bound on waiting for an unfinished connect during shutdown.
     private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);

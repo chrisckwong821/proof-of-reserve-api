@@ -78,7 +78,7 @@ public class RefreshTests
                 RedisUserKeyPrefix = settings.RedisUserKeyPrefix
             },
             NullLogger<ReserveCache>.Instance,
-            new MutableSource(example).LoadAsync);
+            new MutableSource(example));
         await small.RefreshAsync();
 
         foreach (int id in new[] { 1, 2, 3, 1 })

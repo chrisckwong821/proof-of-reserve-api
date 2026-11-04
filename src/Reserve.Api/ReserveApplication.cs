@@ -5,12 +5,8 @@ namespace Reserve.Api;
 // Wires settings, services and background jobs together, then maps the endpoints.
 public static class ReserveApplication
 {
-    // Configure the Redis-backed cache, refresh scheduler and endpoints; tests can supply an in-memory loader.
-    // readVersion is the manifest-version check used by ManifestPoller; it defaults to Redis when loadUsers is not given.
-    public static WebApplication Build(
-        string[] args,
-        Func<CancellationToken, Task<UserDataSet>>? loadUsers = null,
-        Func<CancellationToken, Task<string>>? readVersion = null)
+    // Production reads users from Redis; tests pass their own dataSource instead.
+    public static WebApplication Build(string[] args, IUserDataSource? dataSource = null)
     {
         // Resolve appsettings beside the executable, regardless of the working directory.
         var builder = WebApplication.CreateBuilder(new WebApplicationOptions
@@ -27,24 +23,18 @@ public static class ReserveApplication
         // Components keep taking ReserveOptions directly; it is the validated options instance.
         builder.Services.AddSingleton(services => services.GetRequiredService<IOptions<ReserveOptions>>().Value);
 
-        builder.Services.AddSingleton<RedisConnector>();
-        builder.Services.AddSingleton(services =>
+        if (dataSource is null)
         {
-            Func<CancellationToken, Task<UserDataSet>> load = loadUsers
-                ?? services.GetRequiredService<RedisConnector>().LoadAsync;
-            return new ReserveCache(
-                services.GetRequiredService<ReserveOptions>(),
-                services.GetRequiredService<ILogger<ReserveCache>>(),
-                load);
-        });
+            builder.Services.AddSingleton<IUserDataSource, RedisConnector>();
+        }
+        else
+        {
+            builder.Services.AddSingleton(dataSource);
+        }
+
+        builder.Services.AddSingleton<ReserveCache>();
         builder.Services.AddHostedService<RefreshScheduler>();
-        builder.Services.AddHostedService(services => new ManifestPoller(
-            services.GetRequiredService<ReserveCache>(),
-            services.GetRequiredService<ReserveOptions>(),
-            services.GetRequiredService<ILogger<ManifestPoller>>(),
-            readVersion ?? (loadUsers is null
-                ? services.GetRequiredService<RedisConnector>().GetManifestVersionAsync
-                : null)));
+        builder.Services.AddHostedService<ManifestPoller>();
         builder.Services.AddHealthChecks().AddCheck<SnapshotHealthCheck>("snapshot");
 
         var app = builder.Build();

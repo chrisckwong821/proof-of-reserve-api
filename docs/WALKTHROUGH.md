@@ -64,7 +64,7 @@ Third, it registers the services. `RedisConnector` talks to Redis. `ReserveCache
 
 Finally, it builds the app and calls `MapReserveEndpoints` to attach the HTTP routes.
 
-One detail matters for testing: `Build` takes two optional functions, one that loads users and one that reads the data version. In production they're left out, so the server uses Redis. The tests pass in-memory versions, which is why most tests need no Redis at all.
+One detail matters for testing. Everything that needs user data asks for an `IUserDataSource`, a small interface with two methods: load all users, and read the current data version. In production, `Build` registers `RedisConnector` as that source. Tests pass their own in-memory source to `Build` instead, which is why most tests need no Redis at all. Every registration is a single line, and the framework creates each object and hands it what its constructor asks for.
 
 ### Settings, briefly
 
@@ -266,6 +266,7 @@ A lookup table for the framework and library types the server uses, in plain wor
 | --- | --- |
 | `WebApplication` / `WebApplicationBuilder` | The web server, plus a container that creates objects for you. `builder.Services.Add…` registers them, and `Build()` creates the app. |
 | `AddSingleton<T>` | "Create one `T` and give the same one to everyone who needs it." |
+| `AddSingleton<IUserDataSource, RedisConnector>()` | "Whenever something asks for an `IUserDataSource`, give it the one `RedisConnector`." This is how tests swap in fake data: they register a different source. |
 | `BackgroundService` | Base class for something that runs in the background for the app's whole life. You write `ExecuteAsync` as a loop. Used by `RefreshScheduler` and `ManifestPoller`. |
 | `AddHostedService<T>` | "Start this background service when the app starts, and stop it when the app stops." |
 | `IOptions<T>`, `AddOptions().BindConfiguration()` | Copies a config section, such as `Reserve`, into a C# object. |

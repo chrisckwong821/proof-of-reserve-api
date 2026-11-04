@@ -13,7 +13,7 @@ public sealed class ReserveCache : IDisposable
 {
     private static readonly JsonSerializerOptions JsonOptions = JsonSerializerOptions.Web;
     private readonly ILogger<ReserveCache> logger;
-    private readonly Func<CancellationToken, Task<UserDataSet>> loadUsers;
+    private readonly IUserDataSource source;
     private readonly SemaphoreSlim refreshGate = new(1, 1);
     private readonly MemoryCache proofs;
     private Snapshot? current;
@@ -21,10 +21,10 @@ public sealed class ReserveCache : IDisposable
     public ReserveCache(
         ReserveOptions options,
         ILogger<ReserveCache> logger,
-        Func<CancellationToken, Task<UserDataSet>> loadUsers)
+        IUserDataSource source)
     {
         this.logger = logger;
-        this.loadUsers = loadUsers;
+        this.source = source;
         proofs = new MemoryCache(new MemoryCacheOptions { SizeLimit = options.ProofCacheEntries });
     }
 
@@ -41,7 +41,7 @@ public sealed class ReserveCache : IDisposable
         try
         {
             long started = Stopwatch.GetTimestamp();
-            var data = await loadUsers(cancellationToken);
+            var data = await source.LoadAsync(cancellationToken);
             var next = await Task.Run(() => BuildSnapshot(data, cancellationToken), cancellationToken);
             // Publish only the complete replacement; readers can finish using the old snapshot.
             Volatile.Write(ref current, next);

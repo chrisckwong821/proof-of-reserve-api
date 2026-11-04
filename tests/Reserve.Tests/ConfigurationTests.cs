@@ -26,7 +26,7 @@ public class ConfigurationTests
         var source = new MutableSource(await Fixtures.ExampleAsync());
         // Logging off: the host logs the expected startup failure with a full stack trace.
         await using var app = ReserveApplication.Build(
-            ["--urls", "http://127.0.0.1:0", "--Logging:LogLevel:Default", "None", key, value], source.LoadAsync);
+            ["--urls", "http://127.0.0.1:0", "--Logging:LogLevel:Default", "None", key, value], source);
 
         var error = Assert.ThrowsAsync<OptionsValidationException>(() => app.StartAsync());
 
@@ -44,7 +44,7 @@ public class ConfigurationTests
                 "--Reserve:StaleGracePeriod", "1.00:00:00",
                 "--Reserve:RedisManifestKey", " "
             ],
-            new MutableSource(await Fixtures.ExampleAsync()).LoadAsync);
+            new MutableSource(await Fixtures.ExampleAsync()));
 
         var error = Assert.ThrowsAsync<OptionsValidationException>(() => app.StartAsync());
 

@@ -50,7 +50,7 @@ public sealed class TestApp : IAsyncDisposable
     {
         var source = new MutableSource(data);
         string[] args = ["--urls", "http://127.0.0.1:0", "--Logging:LogLevel:Default", "Warning", .. extraArgs];
-        var app = ReserveApplication.Build(args, source.LoadAsync, source.GetVersionAsync);
+        var app = ReserveApplication.Build(args, source);
         await app.StartAsync();
         return new TestApp(app, source);
     }
@@ -64,7 +64,7 @@ public sealed class TestApp : IAsyncDisposable
 }
 
 // Counts reads and simulates delayed or failed loads without changing production code.
-public sealed class MutableSource(UserDataSet data)
+public sealed class MutableSource(UserDataSet data) : IUserDataSource
 {
     private int reads;
 
@@ -79,7 +79,7 @@ public sealed class MutableSource(UserDataSet data)
     public int VersionReads { get; private set; }
     public int VersionFailuresRemaining { get; set; }
 
-    public Task<string> GetVersionAsync(CancellationToken cancellationToken)
+    public Task<string> GetManifestVersionAsync(CancellationToken cancellationToken)
     {
         VersionReads++;
         if (VersionFailuresRemaining > 0)
