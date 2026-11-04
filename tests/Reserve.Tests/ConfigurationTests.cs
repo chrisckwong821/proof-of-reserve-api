@@ -17,7 +17,6 @@ public class ConfigurationTests
     [TestCase("--Reserve:ProofCacheEntries", "0", "ProofCacheEntries")]
     [TestCase("--Reserve:RefreshTimeUtc", "1.00:00:00", "RefreshTimeUtc")]
     [TestCase("--Reserve:RedisManifestKey", " ", "RedisManifestKey")]
-    [TestCase("--Reserve:HeartbeatInterval", "-00:00:01", "HeartbeatInterval")]
     [TestCase("--Reserve:StaleGracePeriod", "1.00:00:00", "StaleGracePeriod")]
     [TestCase("--Reserve:RefreshRetryDelay", "-00:00:01", "RefreshRetryDelay")]
     [TestCase("--Reserve:RefreshRetryMaxDelay", "00:00:30", "RefreshRetryMaxDelay")]
@@ -42,7 +41,7 @@ public class ConfigurationTests
             [
                 "--urls", "http://127.0.0.1:0", "--Logging:LogLevel:Default", "None",
                 "--Reserve:ProofCacheEntries", "0",
-                "--Reserve:HeartbeatInterval", "-00:00:01",
+                "--Reserve:StaleGracePeriod", "1.00:00:00",
                 "--Reserve:RedisManifestKey", " "
             ],
             new MutableSource(await Fixtures.ExampleAsync()).LoadAsync);
@@ -51,7 +50,7 @@ public class ConfigurationTests
 
         Assert.That(error!.Failures, Has.Count.EqualTo(3));
         Assert.That(error.Message,
-            Does.Contain("ProofCacheEntries").And.Contain("HeartbeatInterval").And.Contain("RedisManifestKey"));
+            Does.Contain("ProofCacheEntries").And.Contain("StaleGracePeriod").And.Contain("RedisManifestKey"));
     }
 
     [TestCase("RefreshTimeUtc")]

@@ -45,8 +45,6 @@ public static class ReserveApplication
             readVersion ?? (loadUsers is null
                 ? services.GetRequiredService<RedisConnector>().GetManifestVersionAsync
                 : null)));
-        builder.Services.AddSingleton<RequestStats>();
-        builder.Services.AddHostedService<HeartbeatService>();
         builder.Services.AddHealthChecks().AddCheck<SnapshotHealthCheck>("snapshot");
 
         var app = builder.Build();

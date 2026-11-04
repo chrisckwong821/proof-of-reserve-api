@@ -80,7 +80,6 @@ Refresh (background: build a new snapshot, then swap it in)
 
 Requests (read only: use the current snapshot)
   GET root / proof ─▶ ReserveEndpoints ─▶ ReserveCache.Current ─▶ JSON or 304
-                            └─▶ RequestStats ─▶ HeartbeatService (log line)
   GET /health      ─▶ SnapshotHealthCheck ─▶ ReserveCache.Current
 ```
 
@@ -95,7 +94,7 @@ Requests (read only: use the current snapshot)
 | `Snapshots/` | `ReserveCache`: current snapshot, `RefreshAsync`, `BuildSnapshot`, proof cache. `ProofTags`: Merkle hash tags |
 | `Refresh/` | `RefreshScheduler`: startup load, daily refresh, retry with backoff. `ManifestPoller`: optional mid-day version check |
 | `Data/` | `RedisConnector`: the only user-data source; reads the manifest and its immutable user hash |
-| `Monitoring/` | `SnapshotHealthCheck` (`/health`), `HeartbeatService` (periodic log line), `RequestStats` (request counters) |
+| `Monitoring/` | `SnapshotHealthCheck`: the `/health` staleness check |
 | `Configuration/` | `ReserveOptions` (all `Reserve:*` settings) and its startup validator; see [Settings: appsettings.json and ReserveOptions](#settings-appsettingsjson-and-reserveoptions) |
 | `Models/` | `UserAccount`/`UserDataSet` (loaded data) and `RootResponse`/`ProofResponse` (API JSON) |
 
@@ -120,7 +119,7 @@ appsettings.json  →  appsettings.{Environment}.json  →  environment variable
 The validator then checks the result; an invalid or missing required value stops the server before it serves anything.
 
 - **Required settings** (`RefreshTimeUtc`, `ProofCacheEntries`, `RedisConnection`, `RedisManifestKey`, `RedisUserKeyPrefix`) have no default in `ReserveOptions`; leaving one out stops startup.
-- **Optional settings** (`HeartbeatInterval`, `StaleGracePeriod`, `RefreshRetryDelay`, `RefreshRetryMaxDelay`, `ManifestPollInterval`) have a default in `ReserveOptions`, e.g. `HeartbeatInterval = 5 minutes`. The default applies only when no source sets the key.
+- **Optional settings** (`StaleGracePeriod`, `RefreshRetryDelay`, `RefreshRetryMaxDelay`, `ManifestPollInterval`) have a default in `ReserveOptions`, e.g. `StaleGracePeriod = 30 minutes`. The default applies only when no source sets the key.
 - The shipped `appsettings.json` lists the optional settings too, with the same values as the defaults, so every setting is visible in one file. If you change a default in `ReserveOptions`, change the shipped value as well: the file's value wins whenever the key is present.
 
 ## Run
@@ -244,10 +243,8 @@ Configuration values live only in `src/Reserve.Api/appsettings.json`;
 | Refresh recovered after retrying | `Refresh succeeded on attempt {n}` |
 | Polling found a new version | `Manifest version changed from {old} to {new}; refreshing` |
 | Polling check failed (Warning) | `Manifest poll failed; keeping snapshot {id}. Next poll in {interval}` with the exception |
-| Every `Reserve:HeartbeatInterval` (default `00:05:00`; `00:00:00` turns it off) | `Heartbeat: healthy; snapshot {id} ({n} users) is {age} old, next refresh {time}. Last {interval}: root {count} ({count} not modified), proofs {count} from cache and {count} newly built ({count} not modified), {count} not found, {count} rejected` |
 
-- The heartbeat is logged as a **Warning** and says `STALE` when the snapshot is stale.
-- Counts cover the interval since the previous heartbeat. "From cache" means the proof JSON was reused; "newly built" means it was built from the snapshot on that request. The root is always served from the snapshot's cached JSON.
+- To check the server is alive and the data is fresh, poll `/health`; it reports the snapshot's age and next refresh time.
 
 **Per-request lines (Debug, off by default):** set the `Reserve.Api.Requests` log level to `Debug` in `appsettings.json`, or pass `--Logging:LogLevel:Reserve.Api.Requests=Debug`.
 ```text
@@ -256,7 +253,7 @@ GET proof for user 3: 200, proof newly built, snapshot 2742e1…
 GET proof for user 3: 200, proof from cache, snapshot 2742e1…
 GET proof for user 42: 404, user not found
 ```
-- These are off by default because at thousands of requests per second they flood the logs and cost throughput. Use them briefly for debugging; use the heartbeat counts for day-to-day monitoring.
+- These are off by default because at thousands of requests per second they flood the logs and cost throughput. Use them briefly for debugging. "From cache" means the proof JSON was reused; "newly built" means it was built from the snapshot on that request.
 
 ## Tests
 

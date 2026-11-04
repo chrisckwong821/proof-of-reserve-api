@@ -1,14 +1,12 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using NUnit.Framework;
 using Reserve.Api;
 
 namespace Reserve.Tests;
 
-// The /health endpoint, request counters and the heartbeat log line.
+// The /health endpoint and its staleness rule.
 public class ObservabilityTests
 {
     private TestApp server = null!;
@@ -48,66 +46,6 @@ public class ObservabilityTests
         var (stale, _) = SnapshotHealthCheck.Evaluate(root, options, Parse(now));
 
         Assert.That(stale, Is.EqualTo(expectedStale));
-    }
-
-    [Test]
-    public async Task RequestStatsCountCacheHitsNewProofsAndRejections()
-    {
-        using var root = await server.Client.GetAsync("/api/reserves/root");
-        await RevalidateAsync("/api/reserves/root", root);
-        using var first = await server.Client.GetAsync("/api/reserves/users/1/proof");
-        (await server.Client.GetAsync("/api/reserves/users/1/proof")).Dispose();
-        await RevalidateAsync("/api/reserves/users/1/proof", first);
-        (await server.Client.GetAsync("/api/reserves/users/999/proof")).Dispose();
-        (await server.Client.GetAsync("/api/reserves/users/0/proof")).Dispose();
-
-        var counts = server.App.Services.GetRequiredService<RequestStats>().TakeAndReset();
-
-        Assert.That(counts, Is.EqualTo(new RequestCounts(
-            Root: 2, RootNotModified: 1,
-            ProofFromCache: 2, ProofBuilt: 1, ProofNotModified: 1,
-            ProofNotFound: 1, ProofRejected: 1)));
-        Assert.That(
-            server.App.Services.GetRequiredService<RequestStats>().TakeAndReset(),
-            Is.EqualTo(default(RequestCounts)),
-            "Counts reset after each heartbeat interval.");
-    }
-
-    [Test]
-    public async Task HeartbeatLogsSnapshotAndRequestCounts()
-    {
-        (await server.Client.GetAsync("/api/reserves/users/1/proof")).Dispose();
-        var logger = new ListLogger<HeartbeatService>();
-
-        Heartbeat(logger).WriteHeartbeat(DateTimeOffset.UtcNow);
-
-        var (level, message) = logger.Entries.Single();
-        Assert.That(level, Is.EqualTo(LogLevel.Information));
-        Assert.That(message, Does.StartWith("Heartbeat: healthy"));
-        Assert.That(message, Does.Contain(server.Cache.Current.Root.SnapshotId).And.Contain("1 newly built"));
-    }
-
-    [Test]
-    public void HeartbeatWarnsWhenSnapshotIsStale()
-    {
-        var logger = new ListLogger<HeartbeatService>();
-
-        Heartbeat(logger).WriteHeartbeat(DateTimeOffset.UtcNow.AddDays(2));
-
-        var (level, message) = logger.Entries.Single();
-        Assert.That(level, Is.EqualTo(LogLevel.Warning));
-        Assert.That(message, Does.StartWith("Heartbeat: STALE"));
-    }
-
-    private HeartbeatService Heartbeat(ILogger<HeartbeatService> logger) => new(
-        server.Options, server.Cache, server.App.Services.GetRequiredService<RequestStats>(), logger);
-
-    private async Task RevalidateAsync(string path, HttpResponseMessage previous)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Get, path);
-        request.Headers.IfNoneMatch.Add(previous.Headers.ETag!);
-        using var response = await server.Client.SendAsync(request);
-        Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotModified));
     }
 
     private static DateTimeOffset Parse(string value) => DateTimeOffset.Parse(value, CultureInfo.InvariantCulture);

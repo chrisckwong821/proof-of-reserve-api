@@ -10,9 +10,6 @@ public sealed class ReserveOptions
     public required string RedisManifestKey { get; set; }
     public required string RedisUserKeyPrefix { get; set; }
 
-    // Optional. How often to log a heartbeat line with snapshot age and request counts; 00:00:00 turns it off.
-    public TimeSpan HeartbeatInterval { get; set; } = TimeSpan.FromMinutes(5);
-
     // Optional. How long after a scheduled refresh /health still reports healthy if no new snapshot has appeared.
     public TimeSpan StaleGracePeriod { get; set; } = TimeSpan.FromMinutes(30);
 
@@ -47,7 +44,6 @@ public sealed class ReserveOptions
         Require(RefreshTimeUtc is { } time && IsUnderOneDay(time),
             "RefreshTimeUtc is required and must be between 00:00:00 and 23:59:59.9999999.");
         Require(ProofCacheEntries >= 1, "ProofCacheEntries must be positive.");
-        Require(HeartbeatInterval >= TimeSpan.Zero, "HeartbeatInterval must be zero (off) or positive.");
         Require(IsUnderOneDay(StaleGracePeriod),
             "StaleGracePeriod must be between 00:00:00 and 23:59:59.9999999.");
         Require(IsUnderOneDay(RefreshRetryDelay),

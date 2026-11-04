@@ -1,6 +1,6 @@
 # Walkthrough script: how the Proof of Reserve API works
 
-A script to read aloud when introducing the repository to a code reviewer or a new engineer. It follows one path through the system: the data goes in, a snapshot gets built, a request gets served, and the data stays fresh. It names each class at the moment it does its job. Lines in *[brackets]* are cues for what to show on screen; don't read them aloud. It takes about 25 minutes.
+A script to read aloud when introducing the repository to a code reviewer or a new engineer. It follows one path through the system: the data goes in, a snapshot gets built, a request gets served, and the data stays fresh. It names each class at the moment it does its job. Lines in *[brackets]* are cues for what to show on screen; don't read them aloud. It takes about 25 minutes. If a .NET or library type in the code is unfamiliar, see the [types reference](#appendix-the-net-and-library-types-youll-see) at the end; it's meant for looking things up, not for reading aloud.
 
 ---
 
@@ -60,7 +60,7 @@ First, it creates the web host and points it at the folder next to the executabl
 
 Second, settings. It binds the `Reserve` section of configuration into a `ReserveOptions` object and registers a validator that runs at startup. If any setting is wrong, the server refuses to start, and the error lists every bad setting at once.
 
-Third, it registers the services. `RedisConnector` talks to Redis. `ReserveCache` holds the snapshot. `RefreshScheduler` and `ManifestPoller` run in the background and decide when to refresh. `RequestStats`, `HeartbeatService` and `SnapshotHealthCheck` are monitoring.
+Third, it registers the services. `RedisConnector` talks to Redis. `ReserveCache` holds the snapshot. `RefreshScheduler` and `ManifestPoller` run in the background and decide when to refresh. `SnapshotHealthCheck` backs the `/health` endpoint.
 
 Finally, it builds the app and calls `MapReserveEndpoints` to attach the HTTP routes.
 
@@ -74,7 +74,7 @@ People often ask why there's both a settings file and a settings class. They do 
 
 At startup, ASP.NET Core layers the sources, each overriding the one before: the JSON file, then an environment-specific file, then environment variables, then command-line arguments. It copies the result into one `ReserveOptions`.
 
-There are five required settings: the daily refresh time, the size of the proof cache, and three Redis settings. There are five optional ones, with defaults, covering the heartbeat, retries, health and polling. `GetErrors` checks every rule, one per line, so you can read the rules straight off the code.
+There are five required settings: the daily refresh time, the size of the proof cache, and three Redis settings. There are four optional ones, with defaults, covering retries, health and polling. `GetErrors` checks every rule, one per line, so you can read the rules straight off the code.
 
 `GetNextRefreshUtc` is the small helper everyone uses to answer "when is the next daily refresh?"
 
@@ -201,21 +201,17 @@ By default, data published at two in the afternoon isn't picked up until the nex
 
 A failed check logs a warning and tries again at the next interval. It's off by default, because mid-day updates change the root during the day, which is a product decision, not just a technical one.
 
-## 10. Knowing it's working: monitoring
+## 10. Knowing it's working: health and logs
 
-*[Open the `Monitoring/` folder.]*
+*[Open `Monitoring/SnapshotHealthCheck.cs`.]*
 
-Three small pieces.
+There are two ways to see what the server is doing.
 
-`RequestStats` is a set of counters, updated safely from many requests at once. It counts root responses and how many were `304`s, proofs served from cache versus newly built, not-found responses, and rejected requests. That's all it holds.
-
-`HeartbeatService` writes one log line every five minutes, by default. It reports whether the data is healthy or stale, the snapshot ID, the user count and age, the next refresh time, and the counters since the last heartbeat, which it resets each time. If the data is stale, the line becomes a warning and says `STALE`.
-
-`SnapshotHealthCheck` powers `GET /health`. The rule is in `Evaluate`: the snapshot is **stale** if it's older than the most recent scheduled refresh *and* the grace period, thirty minutes by default, has passed since that refresh was due. Stale means `503`; otherwise it's `200`. The body includes the snapshot details. With the default settings, all the retries fit inside the grace period, so `/health` only turns red if every retry has failed.
+The first is `SnapshotHealthCheck`, which powers `GET /health`. The rule is in `Evaluate`: the snapshot is **stale** if it's older than the most recent scheduled refresh *and* the grace period, thirty minutes by default, has passed since that refresh was due. Stale means `503`; otherwise it's `200`. The body includes the snapshot ID, data version, user count, when it was built, and when the next refresh is due. With the default settings, all the retries fit inside the grace period, so `/health` only turns red if every retry has failed.
 
 A practical note: use `/health` for alerts or for a load balancer's readiness check. Don't use it as a probe that restarts the server. If Redis is down, a restarted server can't load data, so it won't come back up.
 
-Finally, per-request log lines exist at Debug level, under the category `Reserve.Api.Requests`. They're off by default because at thousands of requests a second they'd flood the logs. You switch them on for short debugging sessions.
+The second is the logs. At the normal level, you see one line each time a snapshot is published, the next scheduled refresh time, every failed refresh with its retry plan, and polling changes. Per-request lines also exist, at Debug level, under the category `Reserve.Api.Requests`. They say whether each proof came from the cache or was newly built. They're off by default because at thousands of requests a second they'd flood the logs, so you switch them on for short debugging sessions.
 
 ## 11. How we know it's correct: the tests
 
@@ -246,7 +242,7 @@ To close, the honest list.
 
 ## 13. Recap, and where to start reading
 
-So, in one breath. Redis holds immutable versioned data behind a manifest. `RedisConnector` reads and validates it. `ReserveCache` turns it into an immutable snapshot with the Merkle tree and swaps it in atomically. `ReserveEndpoints` serves the root and proofs straight from that snapshot, with a proof cache and ETags. `RefreshScheduler` and `ManifestPoller` decide when to rebuild. And the monitoring pieces tell you whether the data is fresh.
+So, in one breath. Redis holds immutable versioned data behind a manifest. `RedisConnector` reads and validates it. `ReserveCache` turns it into an immutable snapshot with the Merkle tree and swaps it in atomically. `ReserveEndpoints` serves the root and proofs straight from that snapshot, with a proof cache and ETags. `RefreshScheduler` and `ManifestPoller` decide when to rebuild. And `/health` tells you whether the data is fresh.
 
 If you're new and want to read the code, read it in this order:
 
@@ -257,3 +253,67 @@ If you're new and want to read the code, read it in this order:
 5. `ApiTests.cs` and `TestSupport.cs`, to see how all of it is exercised.
 
 That's the whole system. Questions?
+
+---
+
+## Appendix: the .NET and library types you'll see
+
+A lookup table for the framework and library types the server uses, in plain words. It's grouped the way the code is.
+
+**Hosting and wiring (ASP.NET Core)**
+
+| Type | What it does here |
+| --- | --- |
+| `WebApplication` / `WebApplicationBuilder` | The web server, plus a container that creates objects for you. `builder.Services.Add…` registers them, and `Build()` creates the app. |
+| `AddSingleton<T>` | "Create one `T` and give the same one to everyone who needs it." |
+| `BackgroundService` | Base class for something that runs in the background for the app's whole life. You write `ExecuteAsync` as a loop. Used by `RefreshScheduler` and `ManifestPoller`. |
+| `AddHostedService<T>` | "Start this background service when the app starts, and stop it when the app stops." |
+| `IOptions<T>`, `AddOptions().BindConfiguration()` | Copies a config section, such as `Reserve`, into a C# object. |
+| `IValidateOptions<T>`, `ValidateOnStart()` | Checks that object at startup and refuses to start if it's wrong. |
+
+**HTTP**
+
+| Type | What it does here |
+| --- | --- |
+| `MapGet(path, handler)` | "When a GET hits this path, call this function." Route values such as `{userId}` and query values such as `?snapshotId=` are passed in as parameters automatically. |
+| `HttpContext` | The current request and response, used here to read and write headers such as `ETag`. |
+| `IResult` / `Results.Bytes`, `Results.Json`, `Results.StatusCode` | What a handler returns: "send these bytes", "send this object as JSON", "send this status". |
+| `MapHealthChecks`, `IHealthCheck`, `HealthCheckResult` | Built-in `/health`. You write one check that returns Healthy or Unhealthy, and the framework turns it into `200` or `503`. |
+
+**Redis (StackExchange.Redis)**
+
+| Type | What it does here |
+| --- | --- |
+| `ConnectionMultiplexer` | One long-lived connection to Redis, shared by everything. Expensive to create, so it's created once. |
+| `IDatabase` | The handle you call commands on. |
+| `StringGetAsync` | Redis `GET`, which reads the manifest. |
+| `HashScanAsync` | Redis `HSCAN`, which reads a hash page by page without blocking Redis. |
+
+**Concurrency and timing (.NET)**
+
+| Type | What it does here |
+| --- | --- |
+| `Task`, `async`/`await` | "This may take a while; don't block a thread while waiting." |
+| `CancellationToken` | A "please stop" signal, passed down so work ends quickly at shutdown. |
+| `SemaphoreSlim(1, 1)` | A lock that lets only one refresh run at a time. |
+| `Volatile.Read` / `Volatile.Write` | Read or replace the current snapshot reference so other threads see the change immediately. This is the one-step swap. |
+| `Lazy<T>` | "Create this the first time someone asks, and only once." Used for the Redis connection. |
+| `Task.Run` | Do CPU-heavy work, such as building the tree, on a background thread. |
+| `Task.Delay`, `PeriodicTimer` | "Wait this long" and "tick every N". |
+| `Stopwatch` | Measures how long a load took, for the log line. |
+
+**Data structures and caching**
+
+| Type | What it does here |
+| --- | --- |
+| `record` | A small immutable data class, such as `UserAccount(Id, Balance)`, with equality built in. |
+| `FrozenDictionary` | A read-only dictionary that's very fast to look up. Ideal for a snapshot that never changes. |
+| `MemoryCache` | An in-memory cache with a size limit. It holds proof JSON. `Compact(1.0)` empties it. |
+| `JsonSerializer.SerializeToUtf8Bytes` | Turns an object into JSON bytes. It's done once, so requests can send stored bytes. |
+
+**Logging**
+
+| Type | What it does here |
+| --- | --- |
+| `ILogger<T>` | Writes log lines. `T` sets the category, such as `Reserve.Api.ReserveCache`, which is what log levels are configured by. |
+| `[LoggerMessage]` | A faster, generated logging method, used only on the per-request path. |

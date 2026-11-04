@@ -16,37 +16,33 @@ public static partial class ReserveEndpoints
 
         app.MapHealthChecks("/health", new HealthCheckOptions { ResponseWriter = WriteHealthJson });
         app.MapGet("/api/reserves/root",
-            (HttpContext context, ReserveCache cache, RequestStats stats) =>
-                GetRoot(context, cache, stats, log));
+            (HttpContext context, ReserveCache cache) => GetRoot(context, cache, log));
         // userId is a string so a non-numeric ID gets a JSON 400 instead of the router's empty 404.
         app.MapGet("/api/reserves/users/{userId}/proof",
-            (string userId, string? snapshotId, HttpContext context, ReserveCache cache, RequestStats stats) =>
-                GetProof(userId, snapshotId, context, cache, stats, log));
+            (string userId, string? snapshotId, HttpContext context, ReserveCache cache) =>
+                GetProof(userId, snapshotId, context, cache, log));
 
         return app;
     }
 
     // The root JSON is built once per snapshot, so every request sends the same bytes (or 304).
-    private static IResult GetRoot(HttpContext context, ReserveCache cache, RequestStats stats, ILogger log)
+    private static IResult GetRoot(HttpContext context, ReserveCache cache, ILogger log)
     {
         var snapshot = cache.Current;
         string snapshotId = snapshot.Root.SnapshotId;
 
         bool notModified = SetCacheHeaders(context, snapshotId);
-        stats.RecordRoot(notModified);
         LogRoot(log, notModified ? 304 : 200, snapshotId);
         return CachedJson(notModified, snapshot.RootJson);
     }
 
     // Reject invalid or outdated requests, then serve the proof from the cache or build it.
     private static IResult GetProof(
-        string rawUserId, string? pinnedSnapshotId, HttpContext context, ReserveCache cache, RequestStats stats,
-        ILogger log)
+        string rawUserId, string? pinnedSnapshotId, HttpContext context, ReserveCache cache, ILogger log)
     {
         // Same parsing the old {userId:int} route constraint used, so every ID accepted before is accepted now.
         if (!int.TryParse(rawUserId, NumberStyles.Integer, CultureInfo.InvariantCulture, out int userId))
         {
-            stats.RecordProofRejected();
             LogInvalidUserId(log, rawUserId);
             return Results.Json(
                 new { error = "User ID must be a positive integer." }, statusCode: StatusCodes.Status400BadRequest);
@@ -54,7 +50,6 @@ public static partial class ReserveEndpoints
 
         if (userId <= 0)
         {
-            stats.RecordProofRejected();
             return Reject(log, userId, StatusCodes.Status400BadRequest, "user ID must be positive",
                 new { error = "User ID must be positive." });
         }
@@ -63,7 +58,6 @@ public static partial class ReserveEndpoints
         string snapshotId = snapshot.Root.SnapshotId;
         if (pinnedSnapshotId is not null && pinnedSnapshotId != snapshotId)
         {
-            stats.RecordProofRejected();
             return Reject(log, userId, StatusCodes.Status409Conflict, "pinned snapshot was replaced",
                 new { error = "Snapshot changed; fetch the current root and retry.", snapshotId });
         }
@@ -71,13 +65,11 @@ public static partial class ReserveEndpoints
         byte[]? proof = cache.GetProofJson(snapshot, userId, out bool fromCache);
         if (proof is null)
         {
-            stats.RecordProofNotFound();
             return Reject(log, userId, StatusCodes.Status404NotFound, "user not found",
                 new { error = "User not found." });
         }
 
         bool notModified = SetCacheHeaders(context, $"{snapshotId}-{userId}");
-        stats.RecordProof(fromCache, notModified);
         LogProof(log, userId, notModified ? 304 : 200, fromCache ? "from cache" : "newly built", snapshotId);
         return CachedJson(notModified, proof);
     }
