@@ -5,9 +5,11 @@ This API lets users check that their balance is included in a published Merkle r
 - **Get the root:** `GET /api/reserves/root` returns one hash representing all users’ IDs and balances.
 - **Get a user’s proof:** `GET /api/reserves/users/{userId}/proof` returns that user’s balance and the hashes needed to verify its inclusion in the root.
 
+This is an **internal** service: it has no authentication and must only be reachable on an internal network (see [Limitations](#limitations)). User balances are published to Redis by a separate service; this repository only reads them. New to the code? Start with the [walkthrough](docs/WALKTHROUGH.md).
+
 ## API contract
 
-Method and path | Result |
+| Method and path | Result |
 | --- | --- |
 | `GET /api/reserves/root` | Cached root, user count, snapshot ID, generation time, and source version. |
 | `GET /api/reserves/users/{userId}/proof` | User ID, JPY balance, root, snapshot ID, and sibling tuples. |
@@ -23,7 +25,7 @@ Method and path | Result |
 | `409` | `?snapshotId=` names a snapshot that has been replaced; the body also has the current `snapshotId` | `Snapshot changed; fetch the current root and retry.` |
 
 **Get the root — eight-user example**
-```
+```sh
 curl http://localhost:5080/api/reserves/root
 ```
 ```json
@@ -36,7 +38,7 @@ curl http://localhost:5080/api/reserves/root
 }
 ```
 **Get the proof for user 3**
-```
+```sh
 curl http://localhost:5080/api/reserves/users/3/proof
 ```
 ```json
@@ -65,8 +67,8 @@ curl http://localhost:5080/api/reserves/users/3/proof
 | `docs/` | `WALKTHROUGH.md`: a read-aloud walkthrough of how the server works, for reviewers and new engineers. |
 | `vendor/tagged-merkle/` | Merkle library submodule; its source and tests belong to that library. |
 | `.github/workflows/` | GitHub Actions configuration for automated builds and tests. |
-| `bin/` and `obj/` | Generated build output and intermediate files inside projects; ignored by Git.
 
+Build output (`bin/`, `obj/`) is generated inside each project and ignored by Git.
 
 ## How the server is organized
 
@@ -134,18 +136,17 @@ dotnet run --project src/Reserve.Api -c Release --no-build -- --urls http://loca
 ```
 
 - The first snapshot loads before the server accepts requests; no valid initial data means startup fails.
-- Settings are validated at startup; an invalid or missing `Reserve` setting stops the server with an `OptionsValidationException` naming the setting.
-
+- Settings are validated at startup; any invalid or missing `Reserve` setting stops the server with an `OptionsValidationException` that lists every problem.
 
 ## Data fixtures
 
 | File | Contents |
 | --- | --- |
 | `tests/Reserve.Tests/Fixtures/users-100000.json` | IDs `1..100000`, randomized integer balances `0..999999` JPY, generated with seed `340`. |
-| `tests/Reserve.Tests/Fixtures/users-example.json` | `(1,1111)` through `(8,8888)`, exactly as specified. |
+| `tests/Reserve.Tests/Fixtures/users-example.json` | `(1,1111)` through `(8,8888)`; the dataset used in the examples above. |
 
 - All fixtures are copied only to test output; the API ships no mock datasets. The test-data tool loads fixtures into Redis before the server starts.
-- The generator writes fixture files atomically; the publisher validates each fixture before writing a new Redis dataset.
+- The `ReserveData` generator writes fixture files atomically, and its `seed-redis` command validates a fixture before writing a new Redis dataset.
 
 ```sh
 # Reproduce the large fixture using the .NET 10 generator.
@@ -164,12 +165,7 @@ Saved 100,000-user fixture:
 
 ## Redis
 
-```sh
-# Start Redis, load the example users, and start the API.
-docker compose up -d --wait redis
-dotnet run --project tools/ReserveData -c Release -- seed-redis tests/Reserve.Tests/Fixtures/users-example.json localhost:6379
-dotnet run --project src/Reserve.Api -c Release -- --urls http://localhost:5080
-```
+In production, a separate service publishes user data to Redis. The Redis in `compose.yaml` and the `tools/ReserveData` seeding tool are for local runs and tests only; see [Run](#run).
 
 **Example Redis data** (`version-A` represents a generated version ID):
 
@@ -194,6 +190,14 @@ Update: write complete version-B → point por:current to version-B
         keep version-A unchanged while existing readers finish
 ```
 
+**What the server expects from the publishing service:**
+
+- `por:current` (`Reserve:RedisManifestKey`) holds JSON `{"version", "key", "count"}`; `count` is the number of users in the hash.
+- `key` starts with `Reserve:RedisUserKeyPrefix` (`por:users:`); any other key is rejected.
+- Hash fields and values are plain non-negative decimal integers: user ID → JPY balance.
+- A hash is never modified after the manifest points at it; publish a new version instead. A change during a load fails that load.
+- Keep the previous hash for a while after switching the manifest, so a load already in progress can finish.
+
 ## Caching and daily refresh
 
 ```text
@@ -216,11 +220,6 @@ Validate → sort IDs → serialize tuples → build immutable Merkle tree
 - With polling on, the root and `snapshotId` can change during the day, so clients pinning `?snapshotId=` get `409` more often and must fetch the root again.
 - When a snapshot is replaced, the proofs cached for the old one are cleared.
 - **HTTP caching:** both APIs send `ETag` and `Cache-Control: private, no-cache`; a matching `If-None-Match` returns `304` after revalidation.
-
-```json
-"RefreshTimeUtc": "00:10:00"
-```
-Configuration values live only in `src/Reserve.Api/appsettings.json`;
 
 ## Health and logging
 
@@ -279,7 +278,7 @@ dotnet test tests/Reserve.Tests --filter "FullyQualifiedName~ApiTests"
 
 GitHub Actions runs the same script on pushes, pull requests, and manual workflow runs. It runs the integration suite and Docker end-to-end checks; stress testing remains optional locally.
 
-- Requires `.NET 10`, `Python 3`, and a running Docker engine; The script uses only Python's standard library to control processes and independently verify hashes.
+- Requires `.NET 10`, `Python 3`, and a running Docker engine. The script uses only Python's standard library to control processes and independently verify hashes.
 - Run from the repository root; the script creates its own Redis container and chooses unused loopback ports. It does not use or modify an existing Redis instance.
 
 ```sh
@@ -302,7 +301,7 @@ python3 tests/run-integration.py --redis local
 - Mock files remain under `tests/Reserve.Tests/Fixtures/`; neither mode changes the saved fixtures or requires a manually started API.
 
 ## Stress test
-```s
+```sh
 python3 tests/run-integration.py --stress
 ```
 - Sends **10,000 requests per case with 32 concurrent clients** using persistent HTTP connections; warmup is excluded from measurements.
@@ -325,6 +324,13 @@ Example local run: macOS 15.3.2, .NET 10 Release, Redis in Docker, 100k users, 1
 - **p95 latency:** 95% of measured request times are at or below this value.
 - The Python client and API share the same machine, so results include local client overhead and do not establish production capacity or long-term memory stability.
 
+## Limitations
+
+- **No authentication.** Anyone who can reach the API can read any user's balance. Keep it on an internal network.
+- **Neighbour balances can be guessed.** A proof's first sibling hash is the neighbouring user's leaf. With sequential IDs and a bounded balance range, it can be brute-forced to reveal that user's balance. Fixing this needs a salted leaf format, which would change every root.
+- **The snapshot ID is random per load.** Several server instances serving the same data report different `snapshotId`s, so clients pinning `?snapshotId=` can get `409` when requests land on different instances.
+- **The first load is not retried.** If Redis is unavailable at startup, the server does not start.
+
 ## Dependencies
 
 | Dependency | Purpose |
@@ -340,4 +346,3 @@ Example local run: macOS 15.3.2, .NET 10 Release, Redis in Docker, 100k users, 1
 
 - NuGet versions are recorded in `packages.lock.json`.
 - See [StackExchange.Redis](https://github.com/StackExchange/StackExchange.Redis) and its [connection guidance](https://stackexchange.github.io/StackExchange.Redis/Basics.html).
- |
