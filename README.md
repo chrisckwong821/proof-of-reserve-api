@@ -48,7 +48,7 @@ curl http://localhost:5080/api/reserves/users/3/proof
 | Directory | Purpose |
 | --- | --- |
 | `src/Reserve.Api/` | The running server: two endpoints, the Redis connector, cache, and settings. |
-| `tests/Reserve.Tests/` | Executable tests for responses, validation, scheduling, caching, and Redis. |
+| `tests/Reserve.Tests/` | NUnit tests for responses, validation, scheduling, caching, and Redis. |
 | `tests/Reserve.Tests/Fixtures/` | Saved eight-user and 100k mock datasets, used only for testing and seeding test Redis. |
 | `tests/` | Contains the full-system runner and `stress.py` for repeatable HTTP load tests. |
 | `tools/ReserveData/` | Generates mock data and seeds Redis; used by the integration script, not by the running server. |
@@ -164,13 +164,23 @@ Configuration values live only in `src/Reserve.Api/appsettings.json`;
 
 ## Tests
 
+Run these commands from the repository root; the paths are relative to it.
+
 ```sh
 # HTTP/cache tests with an injected in-memory source; no Redis required.
-dotnet run --project tests/Reserve.Tests -c Release
+dotnet test tests/Reserve.Tests -c Release
 
 # Include Redis integration using an isolated test instance.
-RESERVE_TEST_REDIS=localhost:6379 dotnet run --project tests/Reserve.Tests -c Release
+RESERVE_TEST_REDIS=localhost:6379 dotnet test tests/Reserve.Tests -c Release
+
+# Show each test name, or run only some tests.
+dotnet test tests/Reserve.Tests --logger "console;verbosity=normal"
+dotnet test tests/Reserve.Tests --filter "FullyQualifiedName~ApiTests"
 ```
+
+- Tests use [NUnit](https://docs.nunit.org/). Each test class starts its own in-process server in `[SetUp]`, so tests are independent and can run alone.
+- Shared helpers live in `TestSupport.cs`: fixtures, `TestApp` (a fresh server), `MutableSource` (a controllable data source) and `ProofVerifier` (rebuilds the root without the production Merkle library).
+- Redis tests are reported as **skipped** unless `RESERVE_TEST_REDIS` is set.
 
 ## End-to-end test
 
@@ -231,7 +241,10 @@ Example local run: macOS 15.3.2, .NET 10 Release, Redis in Docker, 100k users, 1
 | `StackExchange.Redis` `3.2.0` | Maintained asynchronous Redis client and shared connections. |
 | `RESPite` `3.2.0` (transitive) | Redis protocol support used by the Redis client. |
 | `System.IO.Hashing` `10.0.12` (transitive) | Redis-client dependency; application Merkle hashes use only BIP340-tagged SHA-256. |
+| `NUnit` `4.6.1` (tests only) | Test framework: `[Test]`, `[TestCase]`, `Assert.That`. |
+| `NUnit3TestAdapter` `6.3.1` (tests only) | Lets `dotnet test` discover and run NUnit tests. |
+| `Microsoft.NET.Test.Sdk` `18.11.0` (tests only) | Test host used by `dotnet test`. |
 
-- NuGet versions are recorded in `packages.lock.json`; no test framework package is required.
+- NuGet versions are recorded in `packages.lock.json`.
 - See [StackExchange.Redis](https://github.com/StackExchange/StackExchange.Redis) and its [connection guidance](https://stackexchange.github.io/StackExchange.Redis/Basics.html).
  |

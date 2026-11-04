@@ -350,12 +350,13 @@ def main():
             test.start_redis()
             run(
                 dotnet,
-                "run",
-                "--project",
+                "test",
                 "tests/Reserve.Tests",
                 "-c",
                 "Release",
                 "--no-build",
+                "--logger",
+                "console;verbosity=normal",
                 cwd=REPO,
                 env=dict(os.environ, RESERVE_TEST_REDIS=test.connection),
             )
