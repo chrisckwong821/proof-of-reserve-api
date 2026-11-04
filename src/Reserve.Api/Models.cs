@@ -1,4 +1,5 @@
 using System.Globalization;
+using Microsoft.Extensions.Options;
 
 namespace Reserve.Api;
 
@@ -32,6 +33,10 @@ public sealed class ReserveOptions
     public required string RedisManifestKey { get; set; }
     public required string RedisUserKeyPrefix { get; set; }
 
+    // The validated refresh time. RefreshTimeUtc stays nullable so a missing setting is rejected, not read as 00:00.
+    public TimeSpan RefreshTime => RefreshTimeUtc
+        ?? throw new InvalidOperationException("RefreshTimeUtc is not configured.");
+
     // Reject missing or invalid configuration before the server starts.
     public void Validate()
     {
@@ -54,7 +59,24 @@ public sealed class ReserveOptions
     public DateTimeOffset GetNextRefreshUtc(DateTimeOffset now)
     {
         DateTimeOffset utc = now.ToUniversalTime();
-        var scheduled = new DateTimeOffset(utc.Date, TimeSpan.Zero) + RefreshTimeUtc!.Value;
+        var scheduled = new DateTimeOffset(utc.Date, TimeSpan.Zero) + RefreshTime;
         return scheduled > utc ? scheduled : scheduled.AddDays(1);
+    }
+}
+
+// Runs ReserveOptions.Validate() through the options pipeline so failures surface as OptionsValidationException.
+public sealed class ReserveOptionsValidator : IValidateOptions<ReserveOptions>
+{
+    public ValidateOptionsResult Validate(string? name, ReserveOptions options)
+    {
+        try
+        {
+            options.Validate();
+            return ValidateOptionsResult.Success;
+        }
+        catch (ArgumentException error)
+        {
+            return ValidateOptionsResult.Fail(error.Message);
+        }
     }
 }

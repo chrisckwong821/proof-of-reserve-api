@@ -60,13 +60,13 @@ curl http://localhost:5080/api/reserves/users/3/proof
 ## How the server is organized
 
 ```text
-Program.cs (two endpoints)
+Program.cs → ReserveApplication.cs (settings and two endpoints)
     → ReserveCache (root/proof lookup and daily refresh)
         → RedisConnector (Redis only)
         → tagged-merkle (tree and proofs)
 ```
 - `RedisConnector` is the only user-data source;
-- Snapshot construction and the refresh timer live in the cache component; `Models.cs` contains only data records and settings.
+- Snapshot construction and the refresh timer live in the cache component; `Models.cs` contains only data records, settings, and the settings validator.
 
 ## Run
 
@@ -80,6 +80,7 @@ dotnet run --project src/Reserve.Api -c Release --no-build -- --urls http://loca
 ```
 
 - The first snapshot loads before the server accepts requests; no valid initial data means startup fails.
+- Settings are validated at startup; an invalid or missing `Reserve` setting stops the server with an `OptionsValidationException` naming the setting.
 
 
 ## Data fixtures

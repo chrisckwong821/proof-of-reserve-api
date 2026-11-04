@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Options;
 using NUnit.Framework;
 using Reserve.Api;
 
@@ -11,6 +12,20 @@ public class ConfigurationTests
     public void ShippedAppSettingsAreValid()
     {
         Load().Validate();
+    }
+
+    [TestCase("--Reserve:ProofCacheEntries", "0", "ProofCacheEntries")]
+    [TestCase("--Reserve:RefreshTimeUtc", "1.00:00:00", "RefreshTimeUtc")]
+    [TestCase("--Reserve:RedisManifestKey", " ", "RedisManifestKey")]
+    public async Task InvalidSettingStopsStartupBeforeLoadingData(string key, string value, string expectedInMessage)
+    {
+        var source = new MutableSource(await Fixtures.ExampleAsync());
+        await using var app = ReserveApplication.Build(["--urls", "http://127.0.0.1:0", key, value], source.LoadAsync);
+
+        var error = Assert.ThrowsAsync<OptionsValidationException>(() => app.StartAsync());
+
+        Assert.That(error!.Message, Does.Contain(expectedInMessage));
+        Assert.That(source.Reads, Is.Zero, "Data must not be loaded when the settings are invalid.");
     }
 
     [TestCase("RefreshTimeUtc")]
